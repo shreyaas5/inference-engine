@@ -25,6 +25,7 @@ struct BenchOptions {
     size_t warmup = 10;
     std::vector<size_t> thread_counts = {1, 2, 4, 8, 16};
     std::string csv_path = "";
+    std::string backend_name = "auto";
 };
 
 struct TimingStats {
@@ -129,14 +130,30 @@ const std::vector<ShapeDef> kTinyLlamaShapes = {
     {"LM Head projection", 32000, 2048}
 };
 
-void print_header() {
+std::vector<size_t> parse_thread_list(const std::string& str) {
+    std::vector<size_t> res;
+    size_t start = 0;
+    while (start < str.size()) {
+        size_t comma = str.find(',', start);
+        if (comma == std::string::npos) {
+            res.push_back(std::stoul(str.substr(start)));
+            break;
+        }
+        res.push_back(std::stoul(str.substr(start, comma - start)));
+        start = comma + 1;
+    }
+    return res;
+}
+
+void print_header(inference_engine::SimdBackend selected_backend) {
     std::cout << "\n========================================================================================================================\n"
               << "                      BIOS V2 — PS08: CPU KERNEL BENCHMARK & PROFILING HARNESS                                         \n"
               << "========================================================================================================================\n";
     std::cout << "Target: TinyLlama-1.1B-Chat-v1.0 (22 Layers, hidden=2048, intermediate=5632, vocab=32000)\n";
-    std::cout << "Detected SIMD Backend: " << inference_engine::backend_name(inference_engine::detect_best_backend()) << "\n";
-    std::cout << "AVX2 Available: " << (inference_engine::is_backend_available(inference_engine::SimdBackend::Avx2) ? "YES" : "NO") << "\n";
-    std::cout << "NEON Available: " << (inference_engine::is_backend_available(inference_engine::SimdBackend::Neon) ? "YES" : "NO") << "\n\n";
+    std::cout << "Hardware Best SIMD Backend: " << inference_engine::backend_name(inference_engine::detect_best_backend()) << "\n";
+    std::cout << "Active Benchmark Backend:   " << inference_engine::backend_name(selected_backend) << "\n";
+    std::cout << "AVX2 Available on CPU:      " << (inference_engine::is_backend_available(inference_engine::SimdBackend::Avx2) ? "YES" : "NO") << "\n";
+    std::cout << "NEON Available on CPU:      " << (inference_engine::is_backend_available(inference_engine::SimdBackend::Neon) ? "YES" : "NO") << "\n\n";
 }
 
 }  // namespace
@@ -150,19 +167,45 @@ int main(int argc, char** argv) {
             opts.iterations = std::stoul(argv[++i]);
         } else if (arg == "--warmup" && i + 1 < argc) {
             opts.warmup = std::stoul(argv[++i]);
+        } else if (arg == "--threads" && i + 1 < argc) {
+            opts.thread_counts = parse_thread_list(argv[++i]);
+        } else if (arg == "--backend" && i + 1 < argc) {
+            opts.backend_name = argv[++i];
         } else if (arg == "--csv" && i + 1 < argc) {
             opts.csv_path = argv[++i];
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: inference_engine_bench [options]\n"
-                      << "  --iterations <n>  Measurement iterations (default: 50)\n"
-                      << "  --warmup <n>      Warmup iterations (default: 10)\n"
-                      << "  --csv <path>      Output CSV file for reporting\n"
-                      << "  --help, -h        Print this help message\n";
+                      << "  --iterations <n>   Measurement iterations (default: 50)\n"
+                      << "  --warmup <n>       Warmup iterations (default: 10)\n"
+                      << "  --threads <t1,...> Comma-separated list of thread counts (default: 1,2,4,8,16)\n"
+                      << "  --backend <name>   Backend selection: auto, scalar, neon, avx2 (default: auto)\n"
+                      << "  --csv <path>       Output CSV file for reporting\n"
+                      << "  --help, -h         Print this help message\n";
             return 0;
         }
     }
 
-    print_header();
+    inference_engine::SimdBackend selected_backend = inference_engine::detect_best_backend();
+    if (opts.backend_name == "scalar") {
+        selected_backend = inference_engine::SimdBackend::Scalar;
+    } else if (opts.backend_name == "neon") {
+        if (!inference_engine::is_backend_available(inference_engine::SimdBackend::Neon)) {
+            std::cerr << "[ERROR] Requested backend 'neon' is not available on this CPU.\n";
+            return 1;
+        }
+        selected_backend = inference_engine::SimdBackend::Neon;
+    } else if (opts.backend_name == "avx2") {
+        if (!inference_engine::is_backend_available(inference_engine::SimdBackend::Avx2)) {
+            std::cerr << "[ERROR] Requested backend 'avx2' is not available on this CPU.\n";
+            return 1;
+        }
+        selected_backend = inference_engine::SimdBackend::Avx2;
+    } else if (opts.backend_name != "auto") {
+        std::cerr << "[ERROR] Unknown backend '" << opts.backend_name << "'. Allowed: auto, scalar, neon, avx2.\n";
+        return 1;
+    }
+
+    print_header(selected_backend);
 
     std::ofstream csv_file;
     if (!opts.csv_path.empty()) {
@@ -180,9 +223,19 @@ int main(int argc, char** argv) {
         inference_engine::quantize_row_q4_0(dot_w.data(), dot_q4.data(), dot_len);
 
         volatile float dummy = 0.0f;
+        auto run_simd_dot = [&](const inference_engine::BlockQ4_0* q4, const float* x) -> float {
+            if (selected_backend == inference_engine::SimdBackend::Avx2) {
+                return inference_engine::avx2::dot_q4_0_f32(q4, x, dot_len);
+            }
+            if (selected_backend == inference_engine::SimdBackend::Neon) {
+                return inference_engine::neon::dot_q4_0_f32(q4, x, dot_len);
+            }
+            return inference_engine::scalar::dot_q4_0_f32(q4, x, dot_len);
+        };
+
         for (size_t w = 0; w < 500; ++w) {
             dummy += inference_engine::scalar::dot_q4_0_f32(dot_q4.data(), dot_x.data(), dot_len);
-            dummy += inference_engine::avx2::dot_q4_0_f32(dot_q4.data(), dot_x.data(), dot_len);
+            dummy += run_simd_dot(dot_q4.data(), dot_x.data());
         }
 
         std::vector<double> s_times;
@@ -199,7 +252,7 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < 20; ++i) {
             auto t0 = Clock::now();
             for (size_t it = 0; it < iters; ++it) {
-                dummy += inference_engine::avx2::dot_q4_0_f32(dot_q4.data(), dot_x.data(), dot_len);
+                dummy += run_simd_dot(dot_q4.data(), dot_x.data());
             }
             auto t1 = Clock::now();
             a_times.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
@@ -210,9 +263,11 @@ int main(int argc, char** argv) {
         TimingStats s_stats = compute_stats(s_times, total_ops, total_bytes);
         TimingStats a_stats = compute_stats(a_times, total_ops, total_bytes, s_stats.median_ms);
 
+        std::string backend_label = inference_engine::backend_name(selected_backend);
         std::cout << "--- [MICROBENCHMARK: Q4_0 Dot Product (K = " << dot_len << ", " << iters << " iters/sample)] ---\n"
-                  << "  Scalar (1T) : " << std::fixed << std::setprecision(2) << s_stats.median_ms << " ms  (" << s_stats.gflops << " GFLOPS)\n"
-                  << "  AVX2   (1T) : " << std::fixed << std::setprecision(2) << a_stats.median_ms << " ms  (" << a_stats.gflops << " GFLOPS, "
+                  << "  Scalar      (1T) : " << std::fixed << std::setprecision(2) << s_stats.median_ms << " ms  (" << s_stats.gflops << " GFLOPS)\n"
+                  << "  " << std::left << std::setw(11) << backend_label << " (1T) : "
+                  << std::fixed << std::setprecision(2) << a_stats.median_ms << " ms  (" << a_stats.gflops << " GFLOPS, "
                   << "Speedup: " << a_stats.speedup << "x)\n\n";
         (void)dummy;
     }
@@ -248,6 +303,7 @@ int main(int argc, char** argv) {
             auto t1 = Clock::now();
             scalar_times.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
         }
+
         TimingStats scalar_stats = compute_stats(scalar_times, ops, bytes);
 
         std::cout << std::left << std::setw(18) << "Implementation"
@@ -282,29 +338,29 @@ int main(int argc, char** argv) {
                      << scalar_stats.gflops << "," << scalar_stats.bandwidth_gbps << ",1.0,1.0,0.0,0.0\n";
         }
 
-        // SIMD Benchmarks across thread counts
+        // SIMD Benchmarks across requested thread counts
         for (size_t tc : opts.thread_counts) {
             std::vector<float> simd_out(shape.rows, 0.0f);
             std::vector<double> simd_times;
 
             if (tc == 1) {
                 for (size_t w = 0; w < opts.warmup; ++w) {
-                    inference_engine::avx2::matmul_q4_0_f32(simd_out.data(), q4_weights.data(), x_f32.data(), shape.rows, shape.cols);
+                    inference_engine::dispatch_matmul_q4_0_f32(simd_out.data(), q4_weights.data(), x_f32.data(), shape.rows, shape.cols, selected_backend, nullptr);
                 }
                 for (size_t i = 0; i < opts.iterations; ++i) {
                     auto t0 = Clock::now();
-                    inference_engine::avx2::matmul_q4_0_f32(simd_out.data(), q4_weights.data(), x_f32.data(), shape.rows, shape.cols);
+                    inference_engine::dispatch_matmul_q4_0_f32(simd_out.data(), q4_weights.data(), x_f32.data(), shape.rows, shape.cols, selected_backend, nullptr);
                     auto t1 = Clock::now();
                     simd_times.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
                 }
             } else {
                 inference_engine::ThreadPool pool(tc);
                 for (size_t w = 0; w < opts.warmup; ++w) {
-                    inference_engine::dispatch_matmul_q4_0_f32(simd_out.data(), q4_weights.data(), x_f32.data(), shape.rows, shape.cols, inference_engine::SimdBackend::Avx2, &pool);
+                    inference_engine::dispatch_matmul_q4_0_f32(simd_out.data(), q4_weights.data(), x_f32.data(), shape.rows, shape.cols, selected_backend, &pool);
                 }
                 for (size_t i = 0; i < opts.iterations; ++i) {
                     auto t0 = Clock::now();
-                    inference_engine::dispatch_matmul_q4_0_f32(simd_out.data(), q4_weights.data(), x_f32.data(), shape.rows, shape.cols, inference_engine::SimdBackend::Avx2, &pool);
+                    inference_engine::dispatch_matmul_q4_0_f32(simd_out.data(), q4_weights.data(), x_f32.data(), shape.rows, shape.cols, selected_backend, &pool);
                     auto t1 = Clock::now();
                     simd_times.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
                 }
@@ -313,7 +369,7 @@ int main(int argc, char** argv) {
             TimingStats simd_stats = compute_stats(simd_times, ops, bytes, scalar_stats.median_ms, tc);
             ErrorStats err = compute_error(ref_out, simd_out);
 
-            std::string label = "AVX2 Q4_0";
+            std::string label = inference_engine::backend_name(selected_backend) + std::string(" Q4_0");
             std::cout << std::left << std::setw(18) << label
                       << std::setw(12) << tc
                       << std::fixed << std::setprecision(3)
@@ -328,7 +384,8 @@ int main(int argc, char** argv) {
                       << "\n";
 
             if (csv_file.is_open()) {
-                csv_file << shape.name << "," << shape.rows << "," << shape.cols << ",AVX2," << tc << ","
+                csv_file << shape.name << "," << shape.rows << "," << shape.cols << ","
+                         << inference_engine::backend_name(selected_backend) << "," << tc << ","
                          << simd_stats.median_ms << "," << simd_stats.mean_ms << "," << simd_stats.stddev_ms << ","
                          << simd_stats.min_ms << "," << simd_stats.max_ms << ","
                          << simd_stats.gflops << "," << simd_stats.bandwidth_gbps << ","

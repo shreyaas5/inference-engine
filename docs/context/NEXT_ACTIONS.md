@@ -31,12 +31,12 @@
 
 ### `P1` — Required for Next Major Milestone (Unblocked Immediately)
 - [x] **`P1-1` (Owner: I):** Port vectorized per-block scale accumulation (single end-of-row `vaddvq_f32`) and 2-row register tiling (`m` and `m + 1`) from `src/kernels/avx2/kernels_avx2.cpp` to `src/kernels/neon/kernels_neon.cpp` (`neon::dot_q4_0_f32`, `neon::matmul_q4_0_f32`, `neon::matmul_f32`) (`KI-016` resolved in `1c046cb`).
-- [ ] **`P1-2` (Owner: I):** Update `benchmarks/bench_kernels.cpp` to select the active SIMD backend dynamically via `detect_best_backend()` instead of hardcoding `SimdBackend::Avx2`, support `--backend <scalar|neon|avx2>`, and capture Apple Silicon NEON kernel benchmark CSVs (`KI-016`).
+- [x] **`P1-2` (Owner: I):** Update `benchmarks/bench_kernels.cpp` to select the active SIMD backend dynamically via `detect_best_backend()` instead of hardcoding `SimdBackend::Avx2`, support `--backend <scalar|neon|avx2>`, and support comma-separated `--threads` sweeps (`KI-016` resolved).
 - [ ] **`P1-3` (Owner: P):** Implement incremental per-token streaming detokenisation inside the decode loop in `src/app/main.cpp` using prefix-diff decoding (`KI-017`).
 
 ### `P2` — Important Engineering Improvements
 - [ ] **`P2-1` (Owner: U):** Precompute RoPE $(\cos\theta, \sin\theta)$ lookup tables (`[max_seq_len, head_dim / 2]`) in `TransformerEngine::init()` (`KI-006`) and parallelize `attention_gqa` across query heads for long contexts (`KI-014`).
-- [ ] **`P2-2` (Owner: I):** Add an adaptive thread/chunk cap in `src/kernels/dispatch.cpp` for small output dimensions (`out_dim <= 256`) where 16T SMT wake-up overhead exceeds 8T physical-core latency, and reconcile the minor prefetch CSV text figures and machine-local links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` (`KI-018`).
+- [x] **`P2-2` (Owner: I):** Add an adaptive thread/chunk cap in `src/kernels/dispatch.cpp` for small output dimensions (`out_dim <= 256`) where 16T SMT wake-up overhead exceeds 8T physical-core latency, and reconcile the minor prefetch CSV text figures and machine-local links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` (`KI-018` resolved).
 - [ ] **`P2-3` (Owner: P):** Add `--bench-runs <N>` (multi-iteration warmup + median/p95 summary) to `src/app/main.cpp` and add an automated synthetic CLI smoke test to CTest.
 
 ### `P3` — Optional Polish

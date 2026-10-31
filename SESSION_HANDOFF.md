@@ -38,6 +38,15 @@ Member I owns:
    - Verified cross-compilation syntax & type check with `clang++ --target=aarch64-w64-mingw32` (0 warnings, 0 errors).
 4. **Integration Baseline Merge:**
    - Cleanly synchronized `feature/cpu-kernel-optimisation` with `origin/integration-ps08-team-sync-2026-10-31` (`ad246cb`), incorporating Member P's subsegment tokenizer encoding and team handoff documentation suite.
+5. **Backend-Agnostic Benchmark Runner & CLI Flag (Task `P1-2`):**
+   - Updated `benchmarks/bench_kernels.cpp` to use `detect_best_backend()` dynamically rather than hardcoding `SimdBackend::Avx2`.
+   - Added `--backend <auto|scalar|neon|avx2>` CLI option with graceful error reporting on unsupported architectures.
+   - Added comma-separated `--threads` parsing (e.g. `--threads 1,2,4,8,16` or `--threads 8`).
+6. **Adaptive Small-Matrix Task Chunking in Dispatch (Task `P2-1`):**
+   - In `src/kernels/dispatch.cpp`, implemented `compute_chunk_schedule()` with an adaptive cap for small matrices (`out_dim <= 256`): limits tasks to physical cores ($\le 8$) and sets minimum chunk to 16 rows, preventing SMT wake-up jitter and queue contention on Attention K/V projections.
+7. **Reconciliation of Benchmark CSV Figures & Clean Relative Links (Task `P2-2`):**
+   - Cleaned all machine-local `file:///` URLs from `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` into repository-relative markdown links (`../../src/...`, `../../benchmarks/...`).
+   - Reconciled Section 2 Claim D figures with exact `benchmarks/results/benchmarks_prefetch.csv` values.
 
 ---
 
@@ -45,12 +54,12 @@ Member I owns:
 
 - **Working & Verified (`8/8` CTest suites passing):**
   - AVX2/FMA & ARM64 NEON 2-row register tiling & vectorized scale accumulation.
-  - Multi-row contiguous chunk scheduling in `src/kernels/dispatch.cpp`.
-  - All 8 unit test suites pass in ~2.08s with zero warnings.
-- **Pending Implementation Tasks:**
-  - **Task `P1-2`:** Update `benchmarks/bench_kernels.cpp` to use `detect_best_backend()` rather than hardcoding `SimdBackend::Avx2` and add `--backend <scalar|neon|avx2>` CLI support.
-  - **Task `P2-1`:** Add adaptive thread-count / chunk cap in `src/kernels/dispatch.cpp` for small matrices (`out_dim <= 256`) where SMT wake-up overhead exceeds physical-core latency.
-  - **Task `P2-2`:** Reconcile minor prefetch CSV text figures and convert machine-local links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` to relative links.
+  - Multi-row contiguous chunk scheduling with adaptive small-matrix cap in `src/kernels/dispatch.cpp`.
+  - Backend-agnostic benchmark executable `inference_engine_bench` supporting AVX2, NEON, Scalar, and thread sweeps.
+  - All 8 unit test suites pass in ~2.11s with zero warnings.
+- **Pending Tasks for Handoff / Integration:**
+  - Branch is ready for Member S to merge `feature/cpu-kernel-optimisation` into the consolidated integration baseline.
+  - Execution of `inference_engine_bench --backend auto` on the remaining team laptops (Apple M4 ARM64, Intel Core Ultra 7 155H, Intel Core i5-10210U).
 
 ---
 

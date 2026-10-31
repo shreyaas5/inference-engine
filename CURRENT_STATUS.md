@@ -18,14 +18,13 @@
 - **Milestone M3 (CPU Kernel Optimization, Full 22-Layer Pretrained Checkpoint Verification & Cross-Platform Benchmarking):** **IN PROGRESS:**
   - **Completed in M3:**
     - **S (`4515579`):** Live 201-tensor header validation and real-weight `Q4_0` quantisation error audit across all 9 functional tensor roles on `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` (`MeanCosSim >= 0.9888`, `SQNR = 16.51–16.82 dB`).
-    - **I (`58c604d`, `b05c4e4`, `1c046cb`):** Native AMD Ryzen 7 7745HX AVX2 verification, `ThreadPool` `std::exception_ptr` propagation, AVX2 & NEON 2-row register tiling (`matmul_q4_0_f32`, `matmul_f32`), vectorized per-block scale accumulation (`compute_block_unscaled_dot_vec`), contiguous 2-row `dispatch.cpp` chunk scheduling, `inference_engine_bench` CSV artifacts (`21.97x` speedup on `2048x2048` 8T, `162.80 GFLOPS` on `2048x5632` 16T), and audited benchmark calculations.
+    - **I (`58c604d`, `b05c4e4`, `1c046cb`, Session 015):** Native AMD Ryzen 7 7745HX AVX2 verification, `ThreadPool` `std::exception_ptr` propagation, AVX2 & NEON 2-row register tiling (`matmul_q4_0_f32`, `matmul_f32`), vectorized per-block scale accumulation (`compute_block_unscaled_dot_vec`), contiguous 2-row `dispatch.cpp` chunk scheduling with adaptive small-matrix cap (`out_dim <= 256`), backend-agnostic `inference_engine_bench` runner (`detect_best_backend()`, `--backend`), and audited benchmark figures/relative links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`.
     - **P (`ce769c8`, `758abac`, `b96b805`, `da21d62`):** Real-checkpoint SentencePiece C++ vs Python parity (`15/15` prompts exact match against `models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model`), subsegment encoding, seeded 64-bit `xorshift*` `Sampler`, and CLI `--benchmark` harness.
   - **Remaining in M3:**
-    1. Merge `origin/feature/transformer-runtime` (`e64078c`) and `origin/feature/cpu-kernel-optimisation` into the consolidated integration baseline.
+    1. Merge `origin/feature/transformer-runtime` (`e64078c`) and `origin/feature/cpu-kernel-optimisation` into the consolidated integration baseline (`ad246cb`).
     2. Resume and finish downloading `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` (`325,472,256` / `2,200,120,064` bytes currently on disk), export 22-layer `.ie` files (`FP32`: `4,400,213,312` B; pure `Q4_0`: `619,113,792` B; mixed `Q4_0`: `1,069,673,792` B), and run full 22-layer golden forward parity and CLI benchmarks.
-    3. Update `benchmarks/bench_kernels.cpp` to be backend-agnostic (`detect_best_backend()`) supporting `--backend <scalar|neon|avx2>` (Task `P1-2`).
-    4. Implement adaptive thread cap for small matrices in `src/kernels/dispatch.cpp` and reconcile prefetch CSV figures and links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` (Task `P2-2`).
-    5. Add incremental per-token streaming detokenisation to `src/app/main.cpp`.
+    3. Run the benchmark suite across the 4-laptop team matrix (Apple M4 ARM64, AMD Ryzen 7 7745HX x86-64, Intel Core Ultra 7 155H, Intel Core i5-10210U).
+    4. Add incremental per-token streaming detokenisation to `src/app/main.cpp` (Member P, `P1-3`).
 
 ---
 
@@ -50,6 +49,6 @@
 
 ## 3. Top 3 Project Priorities
 
-1. **Priority 1 (`P1-2` & `P2-2` — Member I):** Make `benchmarks/bench_kernels.cpp` backend-agnostic (`detect_best_backend()`) with `--backend` selection, add adaptive thread cap for `out_dim <= 256` in `src/kernels/dispatch.cpp`, and reconcile prefetch text figures in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`.
-2. **Priority 2 (`P0` — Member S):** Merge `origin/feature/transformer-runtime` (`e64078c`) and `origin/feature/cpu-kernel-optimisation` into the consolidated integration baseline (`ad246cb`), and complete downloading `model.safetensors` (`2.20 GB`).
-3. **Priority 3 (`P0` — Members U & P):** Run full 22-layer golden forward-pass parity (`U`) and end-to-end CLI generation + `--benchmark` across 1, 2, 4, and 8 threads (`P`), plus add incremental streaming detokenisation in `src/app/main.cpp` (`P`).
+1. **Priority 1 (`P0` — Member S):** Merge `origin/feature/transformer-runtime` (`e64078c`) and `origin/feature/cpu-kernel-optimisation` into the consolidated integration baseline (`ad246cb`), and complete downloading `model.safetensors` (`2.20 GB`).
+2. **Priority 2 (`P0` — Members U & P):** Run full 22-layer golden forward-pass parity (`U`) and end-to-end CLI generation + `--benchmark` across 1, 2, 4, and 8 threads (`P`), plus add incremental streaming detokenisation in `src/app/main.cpp` (`P`).
+3. **Priority 3 (`P1` & `P2` — Team):** Execute the cross-platform benchmark sweep on Apple M4 and Intel laptops using `./build/inference_engine_bench --backend auto` to populate the multi-architecture CPU benchmark table.

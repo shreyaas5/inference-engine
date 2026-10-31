@@ -32,7 +32,7 @@ All comparisons are made under **identical benchmark conditions** (matching thre
 3. **LM Head Projection ($32000 \times 2048$):**
    - At 16 threads, latency decreased from **0.8740 ms to 0.8082 ms** (**+7.53% latency reduction**, reaching **162.18 GFLOPS** and **45.61 GB/s**).
 4. **ARM64 NEON Two-Row Tiling Port:**
-   - Completed native ARM64 implementation of 2-row register tiling and vectorized scale accumulation in [`src/kernels/neon/kernels_neon.cpp`](file:///c:/Users/Lenovo/Downloads/inference-engine/src/kernels/neon/kernels_neon.cpp).
+   - Completed native ARM64 implementation of 2-row register tiling and vectorized scale accumulation in [`src/kernels/neon/kernels_neon.cpp`](../../src/kernels/neon/kernels_neon.cpp).
    - Verified cross-compilation with `clang++ --target=aarch64-w64-mingw32` with zero warnings.
 5. **Numerical Stability:**
    - Maximum absolute error across all shapes $< 4.2 \times 10^{-5}$ and relative $L_2$ error $< 3.5 \times 10^{-7}$ against the scalar oracle.
@@ -50,11 +50,11 @@ All comparisons are made under **identical benchmark conditions** (matching thre
 | **Intel Laptop 1** | **U** | Intel Core Ultra 7 155H (Meteor Lake) | 16C / 22T (6P + 8E + 2LP) | 16 GB DDR5-5600 | x86-64 `AVX2` + `FMA` | Pending Collaborator Sync |
 | **Intel Laptop 2** | **P** | Intel Core i5-10210U (Comet Lake) | 4C / 8T (1.6–4.2 GHz) | 8 GB DDR4-2666 | x86-64 `AVX2` | Pending Collaborator Sync |
 
-> **Project Policy Notice:** Per [`AGENTS.md`](file:///c:/Users/Lenovo/Downloads/inference-engine/AGENTS.md) Section 7, benchmark numbers are never estimated, simulated, or fabricated. All numbers reported in this document are strictly measured from real hardware execution runs.
+> **Project Policy Notice:** Per [`AGENTS.md`](../../AGENTS.md) Section 7, benchmark numbers are never estimated, simulated, or fabricated. All numbers reported in this document are strictly measured from real hardware execution runs.
 
 ### 1.2 Evaluation Methodology
 
-All benchmarks were captured using the dedicated standalone benchmarking executable [`inference_engine_bench`](file:///c:/Users/Lenovo/Downloads/inference-engine/benchmarks/bench_kernels.cpp):
+All benchmarks were captured using the dedicated standalone benchmarking executable [`inference_engine_bench`](../../benchmarks/bench_kernels.cpp):
 1. **Clock Source:** High-resolution monotonic timer (`std::chrono::high_resolution_clock`).
 2. **Warmup Cycles:** 5 warmup iterations per kernel shape to prime L1/L2/L3 caches, populate branch target buffers, and bring CPU cores to boost frequency states.
 3. **Measurement Iterations:** 20 timed iterations per test configuration.
@@ -113,11 +113,15 @@ Here we provide explicit, reproducible evidence for each of the five optimizatio
 
 ### Claim D: Software Prefetching Regression on AMD Zen 4
 - **Theoretical Explanation:** Software prefetch instructions (`_mm_prefetch`) request cache lines ahead of execution. However, on modern high-performance microarchitectures like AMD Zen 4, the hardware L1 data cache stream prefetcher and L2 stride prefetcher already track linear contiguous 64-byte streaming access patterns with near-zero latency. Manual prefetch instructions consume front-end instruction decode bandwidth, occupy load/store queue slots, and pollute line fill buffers.
-- **Reproducible Measured Evidence:**
+- **Reproducible Measured Evidence (from `benchmarks/results/benchmarks_prefetch.csv`):**
   - Attention Q ($2048 \times 2048$, 8 Threads):
     - Without Prefetch (Optimized): **0.0534 ms** (157.09 GFLOPS, 44.18 GB/s)
     - With `_mm_prefetch`: **0.0693 ms** (121.05 GFLOPS, 34.05 GB/s)
     - **Measured Latency Regression: +29.78% slowdown** (Throughput Dropped by **22.94%**).
+  - SwiGLU Down ($2048 \times 5632$, 8 Threads):
+    - Without Prefetch (Optimized): **0.1499 ms** (153.89 GFLOPS)
+    - With `_mm_prefetch`: **0.1676 ms** (137.64 GFLOPS)
+    - **Measured Latency Regression: +11.81% slowdown** (Throughput Dropped by **10.56%**).
   - Attention O ($2048 \times 2048$, 16 Threads):
     - Without Prefetch (Optimized): **0.0681 ms** (123.18 GFLOPS)
     - With `_mm_prefetch`: **0.0798 ms** (105.12 GFLOPS)
@@ -125,7 +129,7 @@ Here we provide explicit, reproducible evidence for each of the five optimizatio
   - LM Head ($32000 \times 2048$, 16 Threads):
     - Without Prefetch (Optimized): **0.8082 ms** (162.18 GFLOPS)
     - With `_mm_prefetch`: **0.9038 ms** (145.02 GFLOPS)
-    - **Measured Latency Regression: +11.83% slowdown**.
+    - **Measured Latency Regression: +11.83% slowdown** (Throughput Dropped by **10.58%**).
   - **Conclusion:** Software prefetching was removed based on hard empirical evidence.
 
 ---
@@ -187,7 +191,7 @@ $$\text{Latency Improvement (\%)} = \frac{\text{Baseline Latency} - \text{Optimi
 
 ## 4. ARM64 NEON Optimisation Implementation
 
-We ported the 2-row register tiling and vectorized scale accumulation strategy to ARM64 NEON in [`src/kernels/neon/kernels_neon.cpp`](file:///c:/Users/Lenovo/Downloads/inference-engine/src/kernels/neon/kernels_neon.cpp).
+We ported the 2-row register tiling and vectorized scale accumulation strategy to ARM64 NEON in [`src/kernels/neon/kernels_neon.cpp`](../../src/kernels/neon/kernels_neon.cpp).
 
 ### 4.1 Microarchitectural Design for ARM64 NEON
 ARM64 provides **32 architectural 128-bit vector registers** (`v0`–`v31`), compared to 16 YMM registers in x86-64. This makes ARM64 NEON an ideal target for 2-row tiling:
@@ -245,7 +249,7 @@ The following test suites were executed to verify system integrity and absence o
      - `sampler` — **Passed** (0.01s)
      - `golden_forward` — **Passed** (0.01s)
 2. **Dedicated Odd-Dimension & Boundary Tail Verification:**
-   - Function: `test_simd_matmul_odd_rows_and_tails()` in [`tests/test_kernels_simd.cpp`](file:///c:/Users/Lenovo/Downloads/inference-engine/tests/test_kernels_simd.cpp).
+   - Function: `test_simd_matmul_odd_rows_and_tails()` in [`tests/test_kernels_simd.cpp`](../../tests/test_kernels_simd.cpp).
    - Validates `out_dim \in \{1, 3, 5, 7, 9, 13, 31, 65, 127, 255\}` and `in_dim \in \{32, 64, 128, 2048\}` across both Q4_0 and FP32 for AVX2 and NEON backends.
    - Result: **Passed cleanly with zero tolerance failures**.
 3. **ThreadPool Stress & Exception Recovery:**
@@ -265,9 +269,9 @@ The following test suites were executed to verify system integrity and absence o
 ## 8. Artifacts & Reproducibility Commands
 
 ### Raw CSV Datasets
-- Baseline measurements: [`benchmarks/results/benchmarks_baseline.csv`](file:///c:/Users/Lenovo/Downloads/inference-engine/benchmarks/results/benchmarks_baseline.csv)
-- Optimised measurements: [`benchmarks/results/benchmarks_optimised.csv`](file:///c:/Users/Lenovo/Downloads/inference-engine/benchmarks/results/benchmarks_optimised.csv)
-- Software prefetch regression measurements: [`benchmarks/results/benchmarks_prefetch.csv`](file:///c:/Users/Lenovo/Downloads/inference-engine/benchmarks/results/benchmarks_prefetch.csv)
+- Baseline measurements: [`benchmarks/results/benchmarks_baseline.csv`](../../benchmarks/results/benchmarks_baseline.csv)
+- Optimised measurements: [`benchmarks/results/benchmarks_optimised.csv`](../../benchmarks/results/benchmarks_optimised.csv)
+- Software prefetch regression measurements: [`benchmarks/results/benchmarks_prefetch.csv`](../../benchmarks/results/benchmarks_prefetch.csv)
 
 ### Reproduction Commands
 ```bash

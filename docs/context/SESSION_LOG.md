@@ -286,3 +286,23 @@
   - Cross-compilation syntax & type check: `clang++ --target=aarch64-w64-mingw32 src/kernels/neon/kernels_neon.cpp -Iinclude -std=c++17 -Wall -Wextra -Wpedantic -fsyntax-only` passed with **0 warnings and 0 errors**.
   - Native release build: Compiled with 0 warnings on Clang 23.1.4.
   - CTest: **8 / 8 suites passed (100%)** in 2.08s.
+
+
+---
+
+## Session 015 — 2026-11-01 (01:00–01:25 IST)
+- **Engineer / Agent:** I (Principal CPU Performance Engineer, SIMD Optimisation Specialist, and Numerical Computing Researcher) + Antigravity Co-Pilot
+- **Branch:** `feature/cpu-kernel-optimisation`
+- **Objective:** Synchronize with consolidated integration baseline (`ad246cb`), make benchmark runner backend-agnostic (`detect_best_backend()`, `--backend`), implement adaptive small-matrix task cap in `src/kernels/dispatch.cpp`, and reconcile benchmark figures and links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`.
+- **Files Modified:**
+  - `CMakeLists.txt` — Resolved integration merge conflict, preserving both SentencePiece system include paths and `inference_engine_bench` executable target.
+  - `src/kernels/dispatch.cpp` — Added `compute_chunk_schedule()` with an adaptive small-matrix heuristic (`out_dim <= 256` caps tasks to physical cores $\le 8$ and enforces minimum 16 rows/task), resolving `KI-018`.
+  - `benchmarks/bench_kernels.cpp` — Made backend-agnostic using `detect_best_backend()` and added `--backend <auto|scalar|neon|avx2>` with validation, comma-separated `--threads` parsing, and dynamic labeling, resolving `KI-016`.
+  - `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` — Reconciled Section 2 Claim D prefetch figures with exact values from `benchmarks/results/benchmarks_prefetch.csv` and converted all machine-local `file:///` URLs to clean repository-relative links.
+  - `DECISIONS.md` — Updated `ADR-012` with adaptive small-matrix scheduling heuristic.
+  - Context documents (`CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/NEXT_ACTIONS.md`, `docs/context/SESSION_LOG.md`).
+- **Verification Run:**
+  - Cross-compilation syntax check: `clang++ --target=aarch64-w64-mingw32 src/kernels/neon/kernels_neon.cpp -Iinclude -std=c++17 -Wall -Wextra -Wpedantic -fsyntax-only` passed with **0 warnings and 0 errors**.
+  - Native release build: Compiled with 0 warnings on Clang 23.1.4.
+  - Benchmark CLI verification: `./build/inference_engine_bench.exe --backend auto`, `--backend scalar`, `--backend neon` (properly rejected with code 1 on x86).
+  - CTest: **8 / 8 suites passed (100%)** in 2.11s.
