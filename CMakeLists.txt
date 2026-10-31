@@ -36,6 +36,9 @@ else()
     )
     FetchContent_MakeAvailable(sentencepiece)
     set(INFERENCE_ENGINE_SENTENCEPIECE_TARGET sentencepiece-static)
+    if(TARGET sentencepiece-static AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(sentencepiece-static PRIVATE -include cstdint)
+    endif()
 endif()
 
 set(INFERENCE_ENGINE_CORE_SOURCES

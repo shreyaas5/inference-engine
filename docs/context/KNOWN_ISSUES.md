@@ -7,12 +7,6 @@
 
 ## 1. Active Issues & Limitations
 
-### `KI-004` — Local `TinyLlama-1.1B-Chat-v1.0/model.safetensors` Download Is Incomplete (`BLOCKED`)
-- **Severity:** High (`P0` blocker for full 22-layer `.ie` conversion and real-weight inference)
-- **Owner:** **S** (affects **U**, **I**, **P**)
-- **Description:** `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` on disk is currently `325,472,256` bytes (`310.4 MB`) out of the expected `2,200,120,064` bytes (`2.20 GB`, ~14.8%). While the 19,660-byte JSON header and first 3 layers (`model.embed_tokens.weight` + Layers `0..2`) are intact and verified via `tools/inspect_checkpoint.py --eval-real-quant-error`, full 22-layer `.ie` model conversion (`models/tinyllama-{fp32,q4_0,q4_0-mixed}.ie`) requires resuming the remaining `1.87 GB` download.
-- **Workaround / Next Step:** Run `curl -L -C -` or `huggingface-cli download TinyLlama/TinyLlama-1.1B-Chat-v1.0 model.safetensors --local-dir models/TinyLlama-1.1B-Chat-v1.0` and then invoke `tools/convert_to_inference_engine.py`.
-
 ### `KI-015` — Two Remote Feature Branches (`b05c4e4` and `e64078c`) Pending Merge into Consolidated Integration Baseline
 - **Severity:** Medium (`P0` integration task)
 - **Owner:** **S** (with **I** and **U**)
@@ -30,12 +24,12 @@
 - **Severity:** Low-Medium (`P1` UX/runtime polish)
 - **Owner:** **P**
 - **Description:** In `src/app/main.cpp`, generated token IDs are accumulated into `generated_ids` during the decode loop and decoded in a single batch call (`tokenizer.decode(generated_ids, &generated_text)`) after generation finishes.
-- **Resolution Plan:** Add incremental prefix-diff decoding inside the decode loop so each newly generated token piece is flushed to `std::cout` immediately while preserving SentencePiece leading-space (`▁`) semantics.
+- **Resolution Plan:** Add incremental prefix-diff decoding inside the decode loop so each newly generated token piece is flushed to `std::cout` immediately while preserving SentencePiece leading-space (` `) semantics.
 
-### `KI-006` & `KI-014` — Per-Token RoPE Trigonometric Calls & Single-Threaded GQA Attention (`P2` Optimization)
+### `KI-014` — Single-Threaded GQA Attention (`P2` Optimization)
 - **Severity:** Low (`P2` optimization)
 - **Owner:** **U**
-- **Description:** `scalar::rope_inplace` computes `std::pow`, `std::cos`, and `std::sin` on every token (`32 * 22 = 704` pairs/token), and `scalar::attention_gqa` runs on a single thread across the 32 query heads. Precomputing `[max_seq_len, head_dim / 2]` `cos`/`sin` tables (`512 KB` total) in `TransformerEngine::init()` and parallelizing `attention_gqa` for long contexts (`pos >= 256`) will reduce non-matmul overhead.
+- **Description:** `scalar::attention_gqa` runs on a single thread across the 32 query heads. Precomputing `[max_seq_len, head_dim / 2]` `cos`/`sin` tables in `TransformerEngine::init()` has resolved RoPE overhead (`KI-006`); parallelizing `attention_gqa` for long contexts (`pos >= 256`) via ThreadPool will further reduce non-matmul latency.
 
 ### `KI-018` — 16-Thread SMT Wake-Up Overhead on Small `256x2048` Attention K/V Projections (`P2` Optimization)
 - **Severity:** Low (`P2` optimization)
@@ -51,7 +45,9 @@
 | `KI-001` | `Q4_0` `.ie` loader & converter unimplemented in M1 | **S** (`cb176b3`) | `loader_validation` CTest (`6/6`) + `convert_to_inference_engine.py --self-test` |
 | `KI-002` | `neon::dot_q4_0_f32` and `avx2::dot_q4_0_f32` delegated to scalar in M1 | **I** (`f76ab55`, `58c604d`, `b05c4e4`) | `kernels_simd` CTest (`8/8`) + Ryzen 7 7745HX benchmarks (`21.97x` on `2048x2048` 8T) |
 | `KI-003` | SentencePiece C++ library not linked in M1 (`Tokenizer` returned `NotImplemented`) | **P** (`ce769c8`, `5929a17`) | `tokenizer` CTest (`4/4`) + `verify_tokenizer_parity.py --self-test` (`15/15` prompts) |
+| `KI-004` | Local `model.safetensors` download incomplete | **S & U** (Session 009) | Downloaded 100% (`2,200,119,864` bytes), converted to `tinyllama-1.1b-q4_0.ie` and `tinyllama-1.1b-q4_0-mixed.ie`, verified E2E generation |
 | `KI-005` | `Sampler` temperature / top-p sampling unimplemented in M1 | **P** (`ce769c8`) | `sampler` CTest (`6/6`) |
+| `KI-006` | RoPE computed runtime trigonometric calls on every token | **U** (Session 009) | Precomputed `rope_cos_` / `rope_sin_` tables in `TransformerEngine::init()`, executed via `scalar::rope_inplace_cached_f32` |
 | `KI-007` | CLI generation loop & `--benchmark` harness stubbed in M1 | **P** (`ce769c8`) | Synthetic 1-layer `.ie` + real `tokenizer.model` E2E CLI benchmark (`329.1 tok/s` decode) |
 | `KI-011` | Duplicate `TransformerWeightBindings` definitions across `loader.hpp` and `transformer.hpp` | **S & U** (`6dd4fed`, `955bd91`) | Unified in `include/inference_engine/loader.hpp` (`ADR-009`) |
 | `KI-012` | `TransformerEngine::forward_token` rejected `Q4_0` weights and ignored `ThreadPool` | **U** (`ce1026a`) | `transformer_q4` CTest (`7/7`) + `verify_transformer_q4.py` (`cos_sim >= 0.996359`) |
