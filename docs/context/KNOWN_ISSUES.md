@@ -1,6 +1,6 @@
 # `KNOWN_ISSUES.md` — Active Bugs, Stubs, Assumptions & Risks
 
-**Last Updated:** 2026-10-31T23:05:00+05:30
+**Last Updated:** 2026-11-01T00:15:00+05:30  
 *(Policy: Never delete an entry silently. When an issue is fixed, change its status to `RESOLVED` and cite the commit/test evidence.)*
 
 ---
@@ -61,14 +61,19 @@
 - **Evidence:** Implemented `TransformerEngine::matmul()` which dynamically routes to `dispatch_matmul_f32` or `dispatch_matmul_q4_0_f32` with runtime SIMD selection and optional `ThreadPool` chunking. Implemented per-token row dequantisation for `Q4_0` `embed_tokens` via `dequantize_row_q4_0` and `Q4_0` `lm_head` projection. Verified end-to-end against independent NumPy implementation (`tools/verify_transformer_q4.py`) across prefill and 4 decode steps, confirming matching numerical output between C++ and NumPy to 5 decimal places.
 
 ### KI-013: Native x86-64 AVX2/FMA Verification Pending
-- **Status:** `RESOLVED` (Verified natively on AMD Ryzen 7 7745HX Zen 4 x86-64 in commit `58c604d`)
+- **Status:** `RESOLVED` (Verified natively on AMD Ryzen 7 7745HX Zen 4 x86-64 in commit `58c604d` and optimized in `feature/cpu-kernel-optimisation`)
 - **Location:** [`src/kernels/avx2/kernels_avx2.cpp`](../../src/kernels/avx2/kernels_avx2.cpp), [`src/common/common.cpp`](../../src/common/common.cpp), [`tests/test_kernels_simd.cpp`](../../tests/test_kernels_simd.cpp)
-- **Evidence:** Natively executed on AMD Ryzen 7 7745HX (8C/16T, Windows 11, Clang 23.1.4). Verified Leaf 1/7 CPUID, OSXSAVE, and XGETBV OS YMM state enablement. Tested across all 5 key TinyLlama projection shapes (`256x2048`, `2048x2048`, `5632x2048`, `2048x5632`, `32000x2048`) with `MaxAbsErr < 4.6e-5` and `RelErr < 3.1e-7` against scalar oracle. Measured 16.79x speedup on attention projection (`110.38 GFLOPS`, `28.91 GB/s`) and up to 20.07x speedup on SwiGLU down projection (`125.51 GFLOPS`, `32.88 GB/s`).
+- **Evidence:** Natively executed and optimized on AMD Ryzen 7 7745HX (8C/16T, Windows 11, Clang 23.1.4). Optimized via Vectorized Scale Accumulation and 2-Row Register Tiling (`ADR-012`). Measured 157.09 GFLOPS (44.18 GB/s, 21.97x speedup vs scalar) on Attention Q and 162.80 GFLOPS on SwiGLU Down. Detailed benchmark report in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`.
 
 ### KI-014: Full 2.20 GB TinyLlama Checkpoint Local Download & 22-Layer Golden Run
 - **Status:** `OPEN — REPRODUCIBLE COMMANDS & REAL-TENSOR SLICES VERIFIED`
 - **Location:** `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py`, `models/TinyLlama-1.1B-Chat-v1.0/`
 - **Description:** Real checkpoint tensor inventory (`201` `BF16` tensors, `2,200,096,768` payload bytes) and real-tensor `Q4_0` quantisation errors across 9 projection roles are verified via `tools/inspect_checkpoint.py --eval-real-quant-error`. `config.json`, `tokenizer_config.json`, and `tokenizer.model` (`499,723` bytes) are downloaded locally. Full 2.20 GB `model.safetensors` download (`curl -C - -L -o models/TinyLlama-1.1B-Chat-v1.0/model.safetensors "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/model.safetensors"`) and offline conversion to `tinyllama-1.1b-fp32.ie` / `tinyllama-1.1b-q4_0.ie` remain to be executed before claiming real TinyLlama text generation.
+
+### KI-015: Software Prefetching Degrades AVX2 Q4_0 Throughput on AMD Zen 4
+- **Status:** `RESOLVED (ANALYZED & SAFELY DISCARDED BASED ON EMPIRICAL BENCHMARKS)`
+- **Location:** `src/kernels/avx2/kernels_avx2.cpp`
+- **Evidence:** Inserting `_mm_prefetch(weight_row + b + 4)` into the inner block accumulation loop caused a 10–23% latency penalty on AMD Ryzen 7 7745HX (Attention Q 8T regressed from 0.053 ms to 0.069 ms). Zen 4 hardware stream prefetchers already anticipate contiguous 64-byte aligned blocks with near-zero latency; explicit software prefetches consumed instruction decode slots and polluted load queues. Software prefetch was removed and documented in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` and `ADR-012`.
 
 ---
 

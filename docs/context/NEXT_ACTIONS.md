@@ -1,7 +1,7 @@
 # `NEXT_ACTIONS.md` — Dependency-Ordered Engineering Backlog
 
-**Last Updated:** 2026-10-31T23:05:00+05:30
-**Current Phase:** Consolidated Team Integration (`integration-ps08-team-sync-2026-10-31`) — Preparing for Real 2.20 GB Checkpoint Execution & M4 Benchmarking
+**Last Updated:** 2026-11-01T00:15:00+05:30  
+**Current Phase:** CPU Kernel Optimisation & Performance Engineering (`feature/cpu-kernel-optimisation`) — Preparing for Integration Merge & 4-Laptop Benchmark Matrix  
 
 ---
 
@@ -68,6 +68,10 @@
 - [x] **6.5 Run Native Verification of AVX2/FMA Kernels on x86-64 Hardware (`KI-013` — Verified on AMD Ryzen 7 7745HX in `58c604d`).**
 - [x] **6.6 Add `--dtype q4_0` Export, Mixed-Precision Loader Validation & `TensorView::data_q4_0()` (`cb176b3`).**
 - [x] **6.7 Wire `dispatch_matmul_q4_0_f32` and `ThreadPool` into `TransformerEngine::forward_token()` (`ce1026a`).**
+- [x] **6.8 Implement Dedicated Benchmark Executable (`inference_engine_bench` in `benchmarks/bench_kernels.cpp`).**
+- [x] **6.9 AVX2 Microarchitectural Optimizations: Vectorized Scale Accumulation, 2-Row Register Tiling & Contiguous Chunk Scheduling (`ADR-012`).**
+- [x] **6.10 Empirical Software Prefetching Analysis (Tested & discarded regression on Zen 4 hardware prefetchers).**
+- [x] **6.11 Publish Detailed Hardware Benchmark Report (`docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`) and Archive Raw Datasets.**
 
 ---
 

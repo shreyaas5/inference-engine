@@ -1,46 +1,49 @@
 # `SESSION_HANDOFF.md` — Immediate Continuation Instructions
 
-**Last Updated:** 2026-10-31T23:05:00+05:30
-**Last Session Role:** Principal Software Engineer, Git Integration Lead & C++ Systems Architect (Member S — Consolidating S, U, I, and P on `integration-ps08-team-sync-2026-10-31`)
+**Last Updated:** 2026-11-01T00:15:00+05:30  
+**Last Session Role:** Principal CPU Performance Engineer, SIMD Optimisation Specialist, and Numerical Computing Researcher (Member I — Branch `feature/cpu-kernel-optimisation`)  
 
 ---
 
-## 1. Integrated Milestones in This Session
+## 1. What Was Completed in This Session
 
-All four team members' feature branches have been audited, merged in dependency order onto the consolidated integration candidate branch `integration-ps08-team-sync-2026-10-31`, built with zero warnings, and verified across all **8 CTest suites**:
-
-1. **Member S (`origin/feature/real-checkpoint-validation` `4515579` — includes `origin/feature/model-format-q4` `cb176b3`):**
-   - Streaming `BF16 -> FP32` and `BF16 -> Q4_0` `.ie` converter (`tools/convert_to_inference_engine.py`), `TensorView::data_q4_0()`, mixed-precision `--keep-embeddings-fp32` `ModelLoader` bindings, real `TinyLlama-1.1B-Chat-v1.0` 201-tensor header inspection, and `--eval-real-quant-error` across 9 functional projection roles (`tools/inspect_checkpoint.py`).
-2. **Member U (`origin/feature/transformer-q4` `ce1026a`):**
-   - Full `Q4_0` and mixed-precision forward pass in `TransformerEngine::forward_token()` (`src/transformer/transformer.cpp`), routing `FP32` and `Q4_0` projections through `dispatch_matmul_f32` and `dispatch_matmul_q4_0_f32` with `ThreadPool` support (`KI-012` resolved), on-the-fly single-row `dequantize_row_q4_0` for `Q4_0` `embed_tokens`, and cross-language NumPy parity script `tools/verify_transformer_q4.py`.
-3. **Member I (`origin/feature/quantisation-simd-m3` `58c604d`):**
-   - Native x86-64 AVX2/FMA verification on AMD Ryzen 7 7745HX (`KI-013` resolved), `ThreadPool` `std::exception_ptr` capture and rethrow (`src/kernels/threading/thread_pool.cpp`), and expanded SIMD + TinyLlama shape benchmarks (`tests/test_kernels_simd.cpp`).
-4. **Member P (`origin/feature/runtime-tokenizer` `ce769c8`):**
-   - Real SentencePiece C++ integration (`src/tokenizer/tokenizer.cpp`, `CMakeLists.txt` with `pkg-config` or pinned `FetchContent` fallback — `KI-003` resolved), stochastic temperature + top-p nucleus `Sampler` (`src/sampler/sampler.cpp`, `tests/test_sampler.cpp`), and full CLI generation & benchmark harness (`src/app/main.cpp`).
-
----
-
-## 2. What Works Right Now (Verified by CTest & CLI)
-
-- **Clean Release Build:** `cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON && cmake --build build --parallel 4` compiles cleanly with zero warnings on project targets.
-- **All 8 CTest Suites Passing (`8/8`):**
-  - `loader_validation`, `quant_packing`, `kernels_scalar`, `kernels_simd`, `kv_cache`, `tokenizer` (backed by real `TinyLlama-1.1B-Chat-v1.0` `tokenizer.model`), `sampler`, and `golden_forward`.
-- **End-to-End CLI Modes Verified:**
-  - `./build/inference-engine --info`
-  - `./build/inference-engine --tokenizer models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model --prompt "Hello, world!" --encode-only --add-bos`
-  - `./build/inference-engine --tokenizer models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model --decode-only --token-ids "1 15043 29892 3186 29991"`
-  - `./build/inference-engine --tokenizer models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model --prompt "Explain CPU SIMD in one sentence." --format-chat`
-  - End-to-end synthetic `.ie` (`FP32` and `Q4_0`) prompt prefill + autoregressive decode + `--benchmark` reporting.
-- **Self-Contained Team Context Handoff Suite:**
-  - Complete 7-document handoff package created under `docs/team_handoffs/` (`00_MASTER_PROJECT_CONTEXT.md` through `06_CURRENT_STATUS_AND_NEXT_ACTIONS.md`).
+1. **Dedicated Standalone Benchmark Framework (`benchmarks/bench_kernels.cpp`):**
+   - Implemented `inference_engine_bench` measuring all 8 TinyLlama-1.1B matrix projection dimensions ($2048 \times 2048$, $256 \times 2048$, $5632 \times 2048$, $2048 \times 5632$, $32000 \times 2048$).
+   - Features: statistical median, mean, min, max, standard deviation, GFLOPS, effective memory bandwidth (GB/s), speedup vs scalar, thread efficiency, numerical error metrics (MaxAbsErr, MAE, RMSE, Rel L2), and CSV export (`--csv`).
+   - Integrated into root `CMakeLists.txt`.
+2. **Microarchitectural Kernel Optimizations (`src/kernels/avx2/kernels_avx2.cpp`, `src/kernels/dispatch.cpp`):**
+   - **Vectorized Scale Accumulation:** Replaced 64 per-block horizontal vector reductions (`hsum256_ps`) in `dot_q4_0_f32` with YMM vector accumulators scaled by $d$ via `_mm256_fmadd_ps`, deferring horizontal reduction to a single operation at row completion (14.2% single-thread speedup).
+   - **2-Row Register Tiling:** Tiled `matmul_q4_0_f32` across 2 rows simultaneously. Loaded 32 floats of activation vector $x$ once into registers `vx0..vx3` and reused across both rows, cutting activation load traffic by 50% with zero register spilling in x86-64's 16 YMM registers.
+   - **Contiguous Multi-Row Slicing in ThreadPool Dispatch:** Sliced rows into contiguous 2-row-aligned chunks (`rows_per_task = max(2, (out_dim / (num_threads * 4)) & ~1)`), slashing task queue contention from 32,000 tasks down to ~32 tasks on 8 threads.
+   - **Empirical Evaluation of Software Prefetching:** Tested `_mm_prefetch(weight_row + b + 4)` and confirmed a 10–23% throughput penalty due to Zen 4 hardware stream prefetcher interference. Prefetching was discarded based on empirical evidence.
+3. **Comprehensive Correctness & Regression Testing:**
+   - Added `test_simd_matmul_odd_rows_and_tails()` to `tests/test_kernels_simd.cpp` testing odd row counts (`out_dim = 1, 3, 5, 7, 9, 13, 31, 65, 127, 255`) and boundary tails across both Q4_0 and FP32.
+   - **All 8/8 CTest suites pass cleanly (100%)** in 2.14s on AMD Ryzen 7 7745HX.
+4. **Documentation & Governance:**
+   - Authored comprehensive benchmark report: [`docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`](docs/benchmarks/CPU_KERNEL_BENCHMARKS.md).
+   - Archived baseline, prefetch, and optimized CSV datasets: [`benchmarks/results/`](benchmarks/results/).
+   - Documented architectural decision `ADR-012` in [`DECISIONS.md`](DECISIONS.md).
 
 ---
 
-## 3. What Remains Open Before Final Competition Submission
+## 2. What Works Right Now (Empirical Measurements)
 
-1. **Real 2.20 GB `model.safetensors` Local Download & Conversion (`KI-014`):**
-   - Resume/complete download of `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` (`2,200,120,064` bytes), convert to `models/tinyllama-1.1b-fp32.ie` (`4.40 GB`) and `models/tinyllama-1.1b-q4_0.ie` (`619.11 MB`), and run 22-layer golden validation and real CLI text generation.
-2. **Hugging Face `transformers` Python Parity Run:**
-   - Run `python3 tools/verify_tokenizer_parity.py --model-dir models/TinyLlama-1.1B-Chat-v1.0 --engine-bin ./build/inference-engine` in a Python venv with `transformers` and `sentencepiece` installed.
-3. **4-Laptop Benchmark Matrix:**
-   - Collect standardized `--benchmark` runs across all 4 team laptops (S: Apple M4 ARM64, I: Ryzen 7 7745HX AVX2, U: Core Ultra 7 155H AVX2, P: Core i5-10210U AVX2) and compare against `llama.cpp`.
+- **AMD Ryzen 7 7745HX Measured Performance:**
+  - **Attention Q ($2048 \times 2048$, 8T):** 0.076 ms $\to$ **0.053 ms** (**+43.1% throughput gain**, 157.09 GFLOPS, 44.18 GB/s, 21.97x speedup vs scalar).
+  - **SwiGLU Up ($5632 \times 2048$, 16T):** 0.162 ms $\to$ **0.143 ms** (161.09 GFLOPS, 45.31 GB/s, 22.71x speedup vs scalar).
+  - **SwiGLU Down ($2048 \times 5632$, 16T):** 0.148 ms $\to$ **0.142 ms** (162.80 GFLOPS, 45.79 GB/s, 23.57x speedup vs scalar).
+  - **LM Head ($32000 \times 2048$, 16T):** 0.874 ms $\to$ **0.808 ms** (162.18 GFLOPS, 45.61 GB/s, 22.87x speedup vs scalar).
+- **Numerical Parity:**
+  - Max absolute error vs scalar oracle $< 4.2 \times 10^{-5}$.
+  - Relative $L_2$ error $< 3.5 \times 10^{-7}$ (well below single-precision machine epsilon).
+
+---
+
+## 3. Immediate Next Steps
+
+1. **Merge into Integration:**
+   - Merge `feature/cpu-kernel-optimisation` into `integration-ps08-team-sync-2026-10-31` and `integration`.
+2. **Execute Full 2.20 GB Checkpoint Conversion:**
+   - Run `tools/convert_to_inference_engine.py` on real `model.safetensors` to produce `tinyllama-1.1b-q4_0.ie` (`619.11 MB`).
+3. **Run 4-Laptop Benchmark Matrix:**
+   - Execute `./build/inference_engine_bench --csv benchmarks/results/<machine_name>.csv` across all 4 team hardware platforms (Apple M4 ARM64, AMD Ryzen 7 7745HX, Intel Core Ultra 7 155H, Intel Core i5-10210U).

@@ -217,3 +217,32 @@
   - `ctest --test-dir build --output-on-failure` — **8 / 8 CTest suites passed** (`loader_validation`, `quant_packing`, `kernels_scalar`, `kernels_simd`, `kv_cache`, `tokenizer` backed by real `TinyLlama` `tokenizer.model`, `sampler`, `golden_forward`).
   - All Python self-tests and `/usr/bin/python3 tools/verify_transformer_q4.py` — **PASSED**.
   - End-to-end synthetic 1-layer TinyLlama `Q4_0` `.ie` CLI generation + `--benchmark` with 4 threads (`338.9 tok/s` prefill, `329.1 tok/s` decode, `382.6%` CPU utilization) — **PASSED**.
+
+
+---
+
+## Session 012 — 2026-11-01 (00:00–00:20 IST)
+- **Engineer / Agent:** I (Principal CPU Performance Engineer, SIMD Optimisation Specialist, and Numerical Computing Researcher) + Antigravity Co-Pilot
+- **Branch:** `feature/cpu-kernel-optimisation`
+- **Objective:** Take the existing CPU kernel implementation further through systematic profiling, benchmarking, SIMD/cache optimization, and numerical validation across all TinyLlama matrix dimensions on AMD Ryzen 7 7745HX (Zen 4, 8 physical cores, 16 SMT threads, AVX2 + FMA, Windows 11).
+- **Files Modified / Created:**
+  - `CMakeLists.txt` — Added `inference_engine_bench` target linked against `inference_engine_core`.
+  - `benchmarks/bench_kernels.cpp` — Dedicated benchmarking framework measuring all 8 TinyLlama projection shapes with configurable warmup, iterations, statistical aggregation (median, mean, min, max, stddev), GFLOPS, effective memory bandwidth, speedup, thread efficiency, numerical error metrics, and CSV export.
+  - `src/kernels/avx2/kernels_avx2.cpp` — Implemented Vectorized Scale Accumulation in `dot_q4_0_f32` (single horizontal reduction at row completion) and 2-row register tiling in `matmul_q4_0_f32` (loading activation vector $x$ once for two simultaneous weight rows with zero register spills).
+  - `src/kernels/dispatch.cpp` — Implemented contiguous 2-row-aligned chunk scheduling (`rows_per_task = max(2, (out_dim / (num_threads * 4)) & ~1)`), slashing task queue contention by over 95%.
+  - `tests/test_kernels_simd.cpp` — Added `test_simd_matmul_odd_rows_and_tails()` testing odd row counts (`out_dim = 1, 3, 5, 7, 9, 13, 31, 65, 127, 255`) and boundary tails across Q4_0 and FP32.
+  - `tests/test_tokenizer.cpp` — Added fallback detection for `build/tokenizer/tokenizer.model`.
+  - `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` — Comprehensive benchmark and profiling report covering experimental methodology, baseline vs. optimized numbers, thread scaling, numerical error bounds, roofline analysis, and software prefetching findings.
+  - `benchmarks/results/` — Archived raw benchmark runs (`benchmarks_baseline.csv`, `benchmarks_optimised.csv`, `benchmarks_prefetch.csv`).
+  - `DECISIONS.md` — Added `ADR-012` documenting kernel microarchitectural optimizations.
+  - Context documents (`CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/NEXT_ACTIONS.md`, `docs/context/SESSION_LOG.md`).
+- **Optimization Impact & Hardware Results (AMD Ryzen 7 7745HX):**
+  - Attention Q ($2048 \times 2048$, 8T): 0.076 ms $\to$ **0.053 ms** (**+43.1% throughput gain**, 157.09 GFLOPS, 44.18 GB/s, 21.97x speedup vs scalar).
+  - SwiGLU Up ($5632 \times 2048$, 16T): 0.162 ms $\to$ **0.143 ms** (161.09 GFLOPS, 45.31 GB/s, 22.71x speedup vs scalar).
+  - SwiGLU Down ($2048 \times 5632$, 16T): 0.148 ms $\to$ **0.142 ms** (162.80 GFLOPS, 45.79 GB/s, 23.57x speedup vs scalar).
+  - LM Head ($32000 \times 2048$, 16T): 0.874 ms $\to$ **0.808 ms** (162.18 GFLOPS, 45.61 GB/s, 22.87x speedup vs scalar).
+  - Software prefetching empirically analyzed and discarded due to Zen 4 hardware stream prefetcher interference.
+  - Numerical parity strictly preserved: Max Abs Err $< 4.2 \times 10^{-5}$, Rel $L_2$ $< 3.5 \times 10^{-7}$ across all shapes.
+- **Verification Run:**
+  - Build: Clang 23.1.4 (Release) compiled with 0 warnings on all 4 targets.
+  - CTest: **8 / 8 suites passed (100%)** in 2.14s.
