@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "inference_engine/kernels.hpp"
 #include "inference_engine/loader.hpp"
 #include "inference_engine/transformer.hpp"
 
@@ -575,6 +576,24 @@ bool test_q4_0_and_mixed_precision_binding() {
         }
     }
 
+    // Verify bound Q4_0 TensorView works directly with dispatch_matmul_q4_0_f32 and matches scalar::matmul_f32.
+    std::vector<float> test_x(cfg.hidden_dim, 0.125f);
+    std::vector<float> out_q4(cfg.q_dim(), 0.0f);
+    std::vector<float> out_ref(cfg.q_dim(), 0.0f);
+    dispatch_matmul_q4_0_f32(out_q4.data(),
+                             q0_view.data_q4_0(),
+                             test_x.data(),
+                             cfg.q_dim(),
+                             cfg.hidden_dim,
+                             detect_best_backend());
+    scalar::matmul_f32(out_ref.data(), deq_q0.data(), test_x.data(), cfg.q_dim(), cfg.hidden_dim);
+    for (size_t i = 0; i < out_q4.size(); ++i) {
+        if (std::fabs(out_q4[i] - out_ref[i]) > 1e-4f) {
+            std::cerr << "dispatch_matmul_q4_0_f32 on bound TensorView diverged from dequantised matmul_f32\n";
+            return false;
+        }
+    }
+
     // 2. Mixed-precision Q4_0 model with FP32 embeddings and lm_head.
     std::vector<TensorDesc> mp_descs;
     std::vector<std::vector<uint8_t>> mp_payloads;
@@ -674,8 +693,16 @@ bool run_loader_validation_tests() {
                       << external_ie_path << "): " << bind_st.message << "\n";
             return false;
         }
+        TransformerEngine ext_engine;
+        Status eng_st = ext_engine.init(ext_loader.config(), &ext_loader);
+        if (!eng_st.ok()) {
+            std::cerr << "Failed to init TransformerEngine on external .ie file ("
+                      << external_ie_path << "): " << eng_st.message << "\n";
+            return false;
+        }
         std::cout << "[   INFO   ] Verified external .ie model (" << external_ie_path
-                  << ") with " << ext_loader.num_tensors() << " bound tensors.\n";
+                  << ") with " << ext_loader.num_tensors() << " bound tensors (dtype="
+                  << dtype_name(ext_loader.config().weight_dtype) << ").\n";
     }
 
     return true;

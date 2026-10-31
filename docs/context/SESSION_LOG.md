@@ -104,3 +104,24 @@
   - Multi-threaded SIMD benchmark in `kernels_simd` verified task chunking scaling from 1 to 16 threads.
 - **Publication:**
   - Pushed `integration` to `origin/integration` (`cb85411..4e3146e..` now pointing to `integration`).
+
+---
+
+## Session 006 — 2026-10-31 (19:33–19:55 IST)
+- **Engineer / Agent:** S (`shreyaas5`) + Antigravity (Principal C++ Systems Engineer & Inference-Runtime Architect on `feature/model-format-q4`)
+- **Objective:** Complete Member S's Milestone M2 engineering deliverables: streaming `Q4_0` `.ie` model export and quantisation error reporting (`tools/convert_to_inference_engine.py`), `TensorView::data_q4_0()` and mixed-precision `ModelLoader` validation, unified `TransformerWeightBindings` consolidation with `TransformerEngine` (`KI-010`), and real `TinyLlama-1.1B-Chat-v1.0` tensor verification.
+- **Files Changed on `feature/model-format-q4`:**
+  - `tools/convert_to_inference_engine.py` — Implemented `--dtype q4_0`, `--input` (file or directory), `--config`, `--keep-embeddings-fp32`, `--report-error` (`MAE`, `RMSE`, `MaxAbsErr`, `RelL2`), and bit-exact IEEE 754 `fp32_to_fp16` + 32-element `BlockQ4_0` packing (`cd98ae8`).
+  - `tools/inspect_checkpoint.py` — Added `.ie` v1 `FP32`/`Q4_0` dtype breakdown, `Q4_0` shape divisibility by 32 check, and non-overlap/exact-EOF validation (`cd98ae8`).
+  - `include/inference_engine/tensor.hpp`, `src/loader/loader.cpp` — Added `TensorView::data_q4_0()`, `dtype()`, `ndim()`, `shape()`, `payload_nbytes()`, `num_elements()`, `num_blocks()`, header/directory dtype validation, and mixed-precision `bind_transformer_weights` (`b13baf8`).
+  - `include/inference_engine/transformer.hpp`, `src/transformer/transformer.cpp`, `tests/test_golden_forward.cpp`, `tools/generate_golden_reference.py` — Unified `TransformerEngine` weight binding with `ModelLoader::bind_transformer_weights(&bindings_)` (`KI-010` resolved) and added per-step decode logit checks (`KI-011`) (`6dd4fed`).
+  - `tests/test_loader_validation.cpp` — Added `Q4_0` and mixed-precision `.ie` binding tests, `dispatch_matmul_q4_0_f32` verification on bound `TensorView`, `TransformerEngine::init` `Q4_0` binding tests, and negative `Q4_0` malformed tests.
+  - Documentation: `DECISIONS.md` (`ADR-008`), `docs/FORMAT_SPECIFICATION.md`, `docs/QUANTISATION.md`, `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `TEAM_STATUS.md`, and `docs/context/*.md`.
+- **Tests Run & Results:**
+  - `cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON && cmake --build build --parallel 4`: **0 warnings**.
+  - `ctest --test-dir build --output-on-failure`: **7 / 7 suites passed**.
+  - `python3 tools/convert_to_inference_engine.py --self-test`: **PASSED**.
+  - Real `TinyLlama-1.1B-Chat-v1.0` HTTP Range tensor verification: verified `model.layers.0.self_attn.k_proj.weight` (`MAE = 2.592e-03`, `RMSE = 4.085e-03`) and `model.layers.0.self_attn.v_proj.weight` (`MAE = 8.170e-04`, `RMSE = 9.958e-04`), and cross-language Python `.ie` (`FP32` & `Q4_0`) reload via `INFERENCE_ENGINE_TEST_IE_PATH`.
+- **Remaining Work:**
+  - Merge `feature/model-format-q4` into `integration` and wire `dispatch_matmul_q4_0_f32` / `ThreadPool` into `TransformerEngine::forward_token` (`KI-012`, Owner: U).
+  - Integrate SentencePiece C++ in `src/tokenizer/tokenizer.cpp` (Issue `#4`, Owner: P).
