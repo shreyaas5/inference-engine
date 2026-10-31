@@ -1,8 +1,8 @@
 # `SESSION_HANDOFF.md` — Immediate Session-to-Session Continuation Guide
 
-> **Last Updated:** 2026-11-01T04:30:00+05:30  
+> **Last Updated:** 2026-11-01T04:40:00+05:30  
 > **Active Integration Branch:** `integration/m4-full-inference`  
-> **Consolidated Integration Baseline:** Merged U (`origin/feature/transformer-runtime`), I (`origin/feature/cpu-kernel-optimisation`), preparing P (`origin/feature/runtime-tokenizer`)  
+> **Consolidated Integration Baseline:** Fully merged U (`fb6420b`), I (`cb8f08d`), and P (`eaaeceb`) on top of `main` (`5657d92`)  
 > **Self-Contained Member Handoff Suite:** [`docs/team_handoffs/`](docs/team_handoffs/) (`00` through `06`)
 
 ---
@@ -37,12 +37,11 @@
   - AVX2/FMA and ARM64 NEON 2-row register tiling and vectorized scale accumulation with tail handling.
   - Multi-row contiguous chunk scheduling with adaptive small-matrix cap in `src/kernels/dispatch.cpp`.
   - Backend-agnostic benchmark executable `inference_engine_bench`.
-  - All 8 unit test suites passing (`8/8`, 100%).
-- **Pending (M4 Integration Sprint):**
-  - Complete Phase 3 merge commit (Member I).
-  - Phase 4: Integrate Member P (`origin/feature/runtime-tokenizer`).
-  - Phase 5: End-to-End Verification Audit and checkpoint verification.
-  - Phase 6: Final Integration Report.
+  - Incremental streaming detokenisation and `--bench-runs` in CLI runtime.
+  - All 9 unit test suites passing (`9/9`, 100%).
+- **Pending Actions:**
+  - Finish checkpoint download (`models/TinyLlama-1.1B-Chat-v1.0/model.safetensors`, missing ~1.87 GB) on local development machine.
+  - Open and merge final Release PR from `integration/m4-full-inference` into `main`.
 
 ---
 

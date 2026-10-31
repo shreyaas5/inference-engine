@@ -321,3 +321,29 @@
     - Pure `Q4_0`: TTFT `1200.07 ms`, decode `20.89 tokens/sec`, peak RSS `698.71 MiB`.
     - Mixed `Q4_0`: TTFT `1338.06 ms`, decode `19.07 tokens/sec`, peak RSS `1126.42 MiB`.
   - All 8 CTest suites passed (`8/8`, 100%).
+
+
+---
+
+## Session 017 — 2026-11-01 (03:30–04:45 IST)
+- **Engineer / Agent:** Release Lead, Senior Git Engineer & Repository Integration Architect (Antigravity)
+- **Branch:** `integration/m4-full-inference` (branched from `main` @ `5657d9278b2f59e1f1ae0605baf1543cb860fde7`)
+- **Objective:** Consolidate, resolve conflicts, and rigorously verify all three outstanding feature branches across Member U (`origin/feature/transformer-runtime`), Member I (`origin/feature/cpu-kernel-optimisation`), and Member P (`origin/feature/runtime-tokenizer`) into a clean release candidate branch without touching `main`.
+- **Merge Sequence & Conflict Resolutions:**
+  1. **Member U Merge (`bd06e62`):** Merged `origin/feature/transformer-runtime` (`fb6420b`). Precomputed RoPE lookup tables, `scalar::rope_inplace_cached_f32`, `forward_prompt` multi-token prefill API, SentencePiece GCC 16 fix (`-include cstdint`), and `docs/validation/REAL_TINYLLAMA_TRANSFORMER_VALIDATION.md`. Zero code conflicts.
+  2. **Member I Merge (`4001171`):** Merged `origin/feature/cpu-kernel-optimisation` (`cb8f08d`). AVX2 & NEON 2-row register tiling (`matmul_q4_0_f32`), vectorized scale accumulation (`dot_q4_0_f32`), odd-row tail verification, adaptive ThreadPool chunk scheduling (`out_dim <= 256`), and backend-agnostic benchmark runner (`inference_engine_bench`). Reconciled documentation conflicts in `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/KNOWN_ISSUES.md`, and `docs/context/SESSION_LOG.md`.
+  3. **Member P Merge (`c642bbf`):** Merged `origin/feature/runtime-tokenizer` (`eaaeceb`). Streaming CLI detokenisation, `--bench-runs`, CI setup-python (`python-version: "3.11"`). Restored accidentally deleted CLI argument parsing block in `src/app/main.cpp`, added `--max-new-tokens` and `--temperature` aliases, made `tests/test_cli_integration.cpp` fully cross-platform (`popen`/`pclose` on POSIX, `_popen`/`_pclose` on Windows), and retained both `golden_forward` and `cli_integration` in `tests/test_main.cpp`.
+- **Verification Run Results:**
+  - Build: Clean compile with 0 warnings on Clang C++17 (Release mode).
+  - CTest: **9 / 9 suites passed (100%)** in 2.38s (`loader_validation`, `quant_packing`, `kernels_scalar`, `kernels_simd`, `kv_cache`, `tokenizer`, `sampler`, `golden_forward`, `cli_integration`).
+  - Kernel Benchmarks (`./build/inference_engine_bench` on ARM64 NEON):
+    - Microbenchmark: Scalar Q4_0 Dot: 8.22 ms vs NEON: 4.07 ms (**2.02x speedup**).
+    - Attention Q: NEON 1T is **2.658x faster** (0.320 ms vs 0.851 ms), NEON 2T is **5.151x faster** (0.165 ms).
+    - LM Head: NEON 1T is **2.683x faster** (4.975 ms vs 13.352 ms), NEON 2T is **5.275x faster** (2.531 ms).
+  - Python Tools:
+    - `python3 tools/inspect_checkpoint.py --print-frozen-contract`: PASSED.
+    - `python3 tools/convert_to_inference_engine.py --self-test`: PASSED.
+    - `python3 tools/verify_tokenizer_parity.py --self-test`: PASSED.
+    - `/usr/bin/python3 tools/verify_transformer_q4.py`: PASSED (`cos_sim >= 0.996359`).
+- **Local Checkpoint Status:**
+  - Local `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` remains at `325,472,256` bytes (310 MB / 2.20 GB, ~14.8%), awaiting resumption of download (`KI-004`). Real 22-layer execution is verified by Member U on complete checkpoint.
