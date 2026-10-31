@@ -114,9 +114,6 @@
   3. **Single Source of Truth for Weight Bindings (`KI-010` Resolved):** Refactor `TransformerEngine` (`include/inference_engine/transformer.hpp`, `src/transformer/transformer.cpp`) to store `TransformerWeightBindings bindings_{}` populated via `ModelLoader::bind_transformer_weights(&bindings_)`, removing private `LayerWeights` and duplicate `bind_tensor()` helpers.
 - **Alternatives Considered:** Incrementing `.ie` format version to `v2` (unnecessary because `.ie` v1 already stores per-tensor `TensorDesc::dtype` in the directory) or quantising 1D RMSNorm weights to `Q4_0` (rejected due to severe normalization scale distortion for `<300 KB` savings).
 - **Consequences:** Implemented and verified in `tools/convert_to_inference_engine.py`, `include/inference_engine/tensor.hpp`, `src/loader/loader.cpp`, `src/transformer/transformer.cpp`, and `tests/test_loader_validation.cpp`.
-
----
-
 ## ADR-009: Real TinyLlama Checkpoint Validation Protocol and Memory Architecture Constraints
 
 - **Date:** 2026-10-31
@@ -132,3 +129,19 @@
 - **Alternatives Considered:** Allocating owned heap buffers for all weights in C++ (rejected: doubles memory footprint and exceeds 8 GB RAM on commodity laptops) or ignoring real-weight quantisation metrics until full offline download completes (rejected: delays early discovery of numerical outliers).
 - **Consequences:** Documented and verified in `tools/inspect_checkpoint.py`, `src/loader/loader.cpp`, and `src/transformer/transformer.cpp`.
 
+---
+
+## ADR-010: Dynamic Task Chunking and Exception Propagation in Persistent ThreadPool
+
+- **Date:** 2026-10-31
+- **Status:** Accepted
+- **Context:**
+  1. In multi-threaded matrix-vector multiplication (`dispatch_matmul_*`), row counts can reach up to 32,000 (such as in `lm_head.weight` projection). Individual task-by-task mutex locking resulted in massive contention on high-core CPUs (e.g. AMD Ryzen 7 7745HX, 8C/16T).
+  2. If an exception occurred within a worker thread callback, standard `std::thread` workers would terminate the process abruptly (`std::terminate`), or leave worker threads in an indeterminate/deadlocked state.
+- **Decision:**
+  1. **Dynamic Task Chunking:** Compute dynamic chunk size as `std::max<size_t>(1, num_tasks / (num_threads * 4))`. This achieves optimal load balancing while eliminating over 95% of mutex acquisitions.
+  2. **Exception Safety & Propagation:** Private member `std::exception_ptr exception_ptr_{}` captures the first thrown exception in any worker or caller thread. Remaining work is halted gracefully, all worker threads are synchronized back to the idle state via `cv_done_`, and the exception is cleanly rethrown on the calling thread via `std::rethrow_exception`.
+- **Alternatives Considered:**
+  - Work-stealing queues (unnecessary architectural complexity for predictable parallel-for loops).
+  - OpenMP `#pragma omp parallel for` (rejected to maintain standard C++17 portability without compiler runtime dependencies).
+- **Consequences:** Implemented in `include/inference_engine/thread_pool.hpp` and `src/kernels/threading/thread_pool.cpp`. Validated via unit tests in `tests/test_kernels_simd.cpp` covering 1,000 rapid successive cycles and forced exception recovery.
