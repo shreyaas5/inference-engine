@@ -9,6 +9,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <numeric>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -44,6 +46,7 @@ struct Arguments {
     bool add_bos = false;
     bool add_eos = false;
     std::string token_ids{};
+    uint32_t bench_runs = 0; // number of benchmark runs (0 = single run)
 };
 
 void print_help() {
@@ -146,8 +149,10 @@ Status parse_arguments(int argc, char** argv, Arguments* args) {
         }
 
         if (arg == "--model" || arg == "--tokenizer" || arg == "--prompt" ||
-            arg == "--threads" || arg == "--max-tokens" || arg == "--temp" ||
-            arg == "--top-p" || arg == "--seed" || arg == "--token-ids") {
+            arg == "--threads" || arg == "--max-tokens" || arg == "--max-new-tokens" ||
+            arg == "--temp" || arg == "--temperature" ||
+            arg == "--top-p" || arg == "--seed" || arg == "--token-ids" ||
+            arg == "--bench-runs") {
             if (i + 1 >= argc) {
                 return Status::Error(inference_engine::StatusCode::InvalidArgument,
                                      "Missing value for " + arg);
@@ -167,7 +172,7 @@ Status parse_arguments(int argc, char** argv, Arguments* args) {
                                          "--threads must be an integer in [1, UINT32_MAX]");
                 }
                 args->runtime.num_threads = static_cast<uint32_t>(parsed_unsigned);
-            } else if (arg == "--max-tokens") {
+            } else if (arg == "--max-tokens" || arg == "--max-new-tokens") {
                 if (!parse_unsigned(value, &parsed_unsigned) ||
                     parsed_unsigned > std::numeric_limits<uint32_t>::max()) {
                     return Status::Error(inference_engine::StatusCode::InvalidArgument,
@@ -175,13 +180,14 @@ Status parse_arguments(int argc, char** argv, Arguments* args) {
                 }
                 args->runtime.max_new_tokens = static_cast<uint32_t>(parsed_unsigned);
             } else if (arg == "--seed") {
-                if (!parse_unsigned(value, &args->runtime.seed)) {
+                if (!parse_unsigned(value, &parsed_unsigned)) {
                     return Status::Error(inference_engine::StatusCode::InvalidArgument,
                                          "--seed must be an unsigned 64-bit integer");
                 }
+                args->runtime.seed = static_cast<uint64_t>(parsed_unsigned);
             } else if (arg == "--token-ids") {
                 args->token_ids = value;
-            } else if (arg == "--temp") {
+            } else if (arg == "--temp" || arg == "--temperature") {
                 if (!parse_float(value, &args->runtime.temperature) ||
                     args->runtime.temperature < 0.0f) {
                     return Status::Error(inference_engine::StatusCode::InvalidArgument,
@@ -193,6 +199,12 @@ Status parse_arguments(int argc, char** argv, Arguments* args) {
                     return Status::Error(inference_engine::StatusCode::InvalidArgument,
                                          "--top-p must be in (0, 1]");
                 }
+            } else if (arg == "--bench-runs") {
+                if (!parse_unsigned(value, &parsed_unsigned) || parsed_unsigned == 0) {
+                    return Status::Error(inference_engine::StatusCode::InvalidArgument,
+                                         "--bench-runs must be a positive integer");
+                }
+                args->bench_runs = static_cast<uint32_t>(parsed_unsigned);
             }
             continue;
         }
@@ -457,6 +469,7 @@ int main(int argc, char** argv) {
     double ttft_ms = 0.0;
     double decode_seconds = 0.0;
     double cpu_seconds = 0.0;
+    std::string previous_output;
     if (args.runtime.max_new_tokens > 0) {
         int32_t next_token = sampler.sample(logits.data(), logits.size());
         if (next_token < 0) {
@@ -468,6 +481,18 @@ int main(int argc, char** argv) {
         generated_token_count = 1;
         if (next_token != kEosTokenId) {
             generated_ids.push_back(next_token);
+            // Stream incremental output for first token
+            std::string current_output;
+            status = tokenizer.decode(generated_ids, &current_output);
+            if (!status.ok()) return fail(status);
+            size_t common = 0;
+            while (common < previous_output.size() && common < current_output.size() &&
+                   previous_output[common] == current_output[common]) {
+                ++common;
+            }
+            std::cout << current_output.substr(common);
+            std::cout.flush();
+            previous_output = std::move(current_output);
         }
 
         const auto decode_start = Clock::now();
@@ -487,6 +512,18 @@ int main(int argc, char** argv) {
             ++generated_token_count;
             if (next_token != kEosTokenId) {
                 generated_ids.push_back(next_token);
+                // Stream incremental output for subsequent token
+                std::string current_output;
+                status = tokenizer.decode(generated_ids, &current_output);
+                if (!status.ok()) return fail(status);
+                size_t common = 0;
+                while (common < previous_output.size() && common < current_output.size() &&
+                       previous_output[common] == current_output[common]) {
+                    ++common;
+                }
+                std::cout << current_output.substr(common);
+                std::cout.flush();
+                previous_output = std::move(current_output);
             }
         }
         const auto decode_end = Clock::now();
@@ -501,7 +538,7 @@ int main(int argc, char** argv) {
     if (!status.ok()) {
         return fail(status);
     }
-    std::cout << generated_text;
+    // Ensure terminal ends with newline after streaming output
     if (!generated_text.empty() && generated_text.back() != '\n') {
         std::cout << '\n';
     }

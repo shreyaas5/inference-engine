@@ -119,6 +119,7 @@ if(INFERENCE_ENGINE_BUILD_TESTS)
         tests/test_tokenizer.cpp
         tests/test_sampler.cpp
         tests/test_golden_forward.cpp
+        tests/test_cli_integration.cpp
     )
 
     target_link_libraries(inference_engine_tests PRIVATE inference_engine_core)
@@ -138,6 +139,7 @@ if(INFERENCE_ENGINE_BUILD_TESTS)
         tokenizer
         sampler
         golden_forward
+        cli_integration
     )
 
     foreach(SUITE_NAME IN LISTS INFERENCE_ENGINE_TEST_SUITES)
