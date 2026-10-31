@@ -86,3 +86,21 @@
   - Executed an independent Python NumPy `FP32` golden verification across S's `.safetensors (BF16) -> .ie (FP32)` converter + C++ `ModelLoader` (`mmap`) + U's `TransformerEngine::forward_token` across a 5-token prompt + 4 greedy decode steps: **PASS** (`max_diff = 6.55651e-07`).
 - **Remaining Work:**
   - Download the real 2.20 GB `TinyLlama-1.1B-Chat-v1.0` checkpoint locally to run full 22-layer `.ie` conversion and PyTorch golden reference validation; link SentencePiece C++ in `Tokenizer` (Issue `#4`).
+
+
+---
+
+## Session 005 — 2026-10-31 (19:15–19:25 IST)
+- **Engineer / Agent:** S (`shreyaas5`) + Antigravity (Senior C++ Systems Engineer & Integrator)
+- **Objective:** Audit Member I's quantisation, SIMD, and multithreading work (`origin/feature/quantisation-simd`), merge it into `integration`, validate clean Release builds and all CTest suites, update context documentation, and publish `integration` to GitHub.
+- **Audit Findings on `origin/feature/quantisation-simd` (`f76ab55`):**
+  - Commit `a948734`: Vectorized NEON and AVX2/FMA `Q4_0` dot product and matmul kernels, CPUID detection on GCC/Clang/MSVC, and ThreadPool task chunking optimization.
+  - Commit `f76ab55`: Explicit 1,024-element bit-exact reference parity test against upstream GGML logic (`KI-007`).
+  - Native verification on Apple Silicon ARM64 confirmed full NEON acceleration; AVX2/FMA compiled cleanly with scalar fallbacks, pending native x86 verification (`KI-013`).
+- **Merge & Test Results:**
+  - Merged `origin/feature/quantisation-simd` (`f76ab55`) into `integration` via merge commit `967f072` (zero merge conflicts).
+  - Built `integration` in Release mode (`AppleClang 17.0.0.17000603`, `-Wall -Wextra -Wpedantic`): **0 warnings**.
+  - All **7 / 7** CTest suites passed (`loader_validation`, `quant_packing`, `kernels_scalar`, `kernels_simd`, `kv_cache`, `tokenizer`, `golden_forward`).
+  - Multi-threaded SIMD benchmark in `kernels_simd` verified task chunking scaling from 1 to 16 threads.
+- **Publication:**
+  - Pushed `integration` to `origin/integration` (`cb85411..4e3146e..` now pointing to `integration`).
