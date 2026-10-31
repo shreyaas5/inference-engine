@@ -58,7 +58,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Hugging Face tokenizer parity dependencies
-        run: python3 -m pip install transformers==4.46.3 sentencepiece==0.2.0 protobuf
+        run: python3 -m pip install transformers==4.46.3 sentencepiece==0.2.0 protobuf jinja2
 
       - name: Run deterministic CTest unit suites
         run: ctest --test-dir build --output-on-failure --build-config ${{ matrix.build_type }}
