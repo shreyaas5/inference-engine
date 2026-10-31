@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -243,6 +245,58 @@ bool test_block_distributions() {
             const float err = std::fabs(multi_src[b * 32 + i] - multi_rec[b * 32 + i]);
             if (err > max_allowed_err) {
                 std::cerr << "Multi-block error exceeded bound at " << (b * 32 + i) << "\n";
+                return false;
+            }
+        }
+    }
+
+    // 6. Explicit GGML / llama.cpp bit-exact reference parity test (KI-007)
+    const size_t ggml_test_len = 1024;  // 32 blocks
+    std::mt19937 ggml_rng(1337);
+    std::uniform_real_distribution<float> ggml_dist(-8.0f, 8.0f);
+    std::vector<float> ggml_src(ggml_test_len);
+    for (size_t i = 0; i < ggml_test_len; ++i) {
+        ggml_src[i] = ggml_dist(ggml_rng);
+    }
+    std::vector<BlockQ4_0> our_blocks(ggml_test_len / 32);
+    if (!quantize_row_q4_0(ggml_src.data(), our_blocks.data(), ggml_test_len).ok()) {
+        std::cerr << "quantize_row_q4_0 failed for GGML parity test\n";
+        return false;
+    }
+
+    // Compute GGML reference blocks
+    for (size_t b = 0; b < our_blocks.size(); ++b) {
+        const float* blk_src = ggml_src.data() + b * 32;
+        float amax = 0.0f;
+        float max_val = 0.0f;
+        for (int l = 0; l < 32; ++l) {
+            const float v = blk_src[l];
+            if (amax < std::fabs(v)) {
+                amax = std::fabs(v);
+                max_val = v;
+            }
+        }
+        const float ref_d = max_val / -8.0f;
+        const float ref_id = (ref_d != 0.0f) ? (1.0f / ref_d) : 0.0f;
+        const uint16_t ref_d_fp16 = fp32_to_fp16(ref_d);
+
+        if (our_blocks[b].d != ref_d_fp16) {
+            std::cerr << "GGML parity scale mismatch at block " << b
+                      << " (our=" << our_blocks[b].d << ", ref=" << ref_d_fp16 << ")\n";
+            return false;
+        }
+
+        for (int l = 0; l < 16; ++l) {
+            const float x0 = blk_src[l] * ref_id;
+            const float x1 = blk_src[l + 16] * ref_id;
+            const uint8_t xi0 = static_cast<uint8_t>(std::clamp(static_cast<int>(std::floor(x0 + 8.5f)), 0, 15));
+            const uint8_t xi1 = static_cast<uint8_t>(std::clamp(static_cast<int>(std::floor(x1 + 8.5f)), 0, 15));
+            const uint8_t ref_byte = static_cast<uint8_t>(xi0 | (xi1 << 4));
+
+            if (our_blocks[b].qs[l] != ref_byte) {
+                std::cerr << "GGML parity byte mismatch at block " << b << ", byte " << l
+                          << " (our=0x" << std::hex << static_cast<int>(our_blocks[b].qs[l])
+                          << ", ref=0x" << static_cast<int>(ref_byte) << std::dec << ")\n";
                 return false;
             }
         }
