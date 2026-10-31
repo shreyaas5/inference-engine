@@ -25,6 +25,25 @@ inline constexpr uint64_t kIePayloadAlignment = 64u;
 inline constexpr uint32_t kIeMaxTensorNameLen = 256u;
 inline constexpr uint32_t kIeMaxTensorCount = 4096u;
 
+struct LayerWeightBindings {
+    TensorView input_layernorm{};
+    TensorView q_proj{};
+    TensorView k_proj{};
+    TensorView v_proj{};
+    TensorView o_proj{};
+    TensorView post_attention_layernorm{};
+    TensorView gate_proj{};
+    TensorView up_proj{};
+    TensorView down_proj{};
+};
+
+struct TransformerWeightBindings {
+    TensorView embed_tokens{};
+    std::vector<LayerWeightBindings> layers{};
+    TensorView final_norm{};
+    TensorView lm_head{};
+};
+
 class ModelLoader {
 public:
     ModelLoader() = default;
@@ -38,11 +57,23 @@ public:
     void close() noexcept;
 
     bool is_loaded() const noexcept { return loaded_; }
+    bool is_mmap() const noexcept { return is_mmap_; }
     const ModelConfig& config() const noexcept { return config_; }
     size_t num_tensors() const noexcept { return tensors_.size(); }
     const std::vector<TensorDesc>& tensor_descriptors() const noexcept { return tensors_; }
 
     const TensorView* find_tensor(const std::string& name) const noexcept;
+
+    // Validates and binds a specific named tensor against expected dimensionality, shape, and dtype.
+    Status validate_tensor_binding(const std::string& name,
+                                   uint32_t expected_ndim,
+                                   const std::array<uint64_t, kMaxTensorDims>& expected_shape,
+                                   DataType expected_dtype,
+                                   TensorView* out_view = nullptr) const noexcept;
+
+    // Validates the complete TinyLlama / LlamaForCausalLM tensor inventory (`3 + 9 * num_layers`
+    // tensors) against `config()` and populates `out_bindings`.
+    Status bind_transformer_weights(TransformerWeightBindings* out_bindings) const;
 
     // Serializes a synthetic or converted `.ie` image into `out_bytes` for testing and tools.
     static Status build_ie_image(const ModelConfig& config,

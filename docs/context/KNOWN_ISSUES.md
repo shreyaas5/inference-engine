@@ -1,6 +1,6 @@
 # `KNOWN_ISSUES.md` — Active Bugs, Stubs, Assumptions & Risks
 
-**Last Updated:** 2026-10-31  
+**Last Updated:** 2026-10-31T18:25:00+05:30  
 *(Policy: Never delete an entry silently. When an issue is fixed, change its status to `RESOLVED` and cite the commit/test evidence.)*
 
 ---
@@ -10,7 +10,7 @@
 ### KI-001: `TransformerEngine::forward_token()` Is an M0 Scaffolding Stub
 - **Status:** `OPEN` (Scheduled for M1 — Issue `#3`, Owner: **U**)
 - **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp)
-- **Description:** `forward_token()` validates arguments, writes zero K/V vectors to `KvCache` across all layers, calls `commit_token()`, and fills `out_logits` with `0.0f`. It does not bind `.ie` tensor weights or execute transformer layer operations yet.
+- **Description:** `forward_token()` validates arguments, writes zero K/V vectors to `KvCache` across all layers, calls `commit_token()`, and fills `out_logits` with `0.0f`. `ModelLoader::bind_transformer_weights()` is now implemented on `feature/model-loader` and ready to be called by `TransformerEngine::init()`.
 
 ### KI-002: Causal Grouped Query Attention (GQA) Kernel Not Yet Implemented
 - **Status:** `OPEN` (Scheduled for M1 — Issue `#3`, Owner: **U**)
@@ -20,12 +20,11 @@
 ### KI-003: `Tokenizer::encode()` and `decode()` Use a Synthetic Byte-Offset Stub
 - **Status:** `OPEN` (Scheduled for M1 — Issue `#4`, Owner: **P**)
 - **Location:** [`src/tokenizer/tokenizer.cpp`](../../src/tokenizer/tokenizer.cpp), [`CMakeLists.txt`](../../CMakeLists.txt)
-- **Description:** SentencePiece C++ is not linked yet. `encode()` pushes `static_cast<int32_t>(c) + 3` per byte so M0 BOS/EOS unit tests can run without external files. This will produce completely invalid token IDs for real TinyLlama inference until SentencePiece is linked.
+- **Description:** SentencePiece C++ is not linked yet. `encode()` pushes `static_cast<int32_t>(c) + 3` per byte so M0 BOS/EOS unit tests can run without external files.
 
 ### KI-004: Offline Python Scripts (`convert_to_inference_engine.py`, `generate_golden_reference.py`) Are Stubs
-- **Status:** `OPEN` (Scheduled for M1 — Issues `#1` and `#3`, Owners: **S** & **U**)
-- **Location:** [`tools/convert_to_inference_engine.py`](../../tools/convert_to_inference_engine.py), [`tools/generate_golden_reference.py`](../../tools/generate_golden_reference.py)
-- **Description:** `convert_to_inference_engine.py` implements 64-byte header packing (`--self-test`), but does not yet parse `.safetensors` or write `.ie` files. `generate_golden_reference.py` is an `argparse` skeleton.
+- **Status:** `PARTIALLY RESOLVED` (`convert_to_inference_engine.py` FP32 & `inspect_checkpoint.py` **RESOLVED** on `feature/model-loader`; `generate_golden_reference.py` and `Q4_0` conversion remain `OPEN` for Issue `#3` / M2)
+- **Evidence:** `tools/inspect_checkpoint.py` and `tools/convert_to_inference_engine.py` now implement full `.safetensors` header & payload reading, `3 + 9 * num_layers` (`201`) tensor inventory validation, and two-pass streaming `BF16/F16/F32 -> FP32` `.ie` v1 conversion, verified by `--self-test`, `--inspect-remote-hf`, and C++ `ModelLoader` reload (`tests/test_loader_validation.cpp`).
 
 ### KI-005: `neon::dot_q4_0_f32` and `avx2::dot_q4_0_f32` Delegate to Scalar Reference
 - **Status:** `OPEN` (Scheduled for M3 — Issue `#2`, Owner: **I**)
@@ -37,27 +36,25 @@
 ## 2. Numerical & Architectural Assumptions to Verify in M1
 
 ### KI-006: RoPE Dimension Pairing Convention (`rotate_half` vs Interleaved)
-- **Status:** `OPEN — UNVERIFIED AGAINST CHECKPOINT` (Verify in M1)
+- **Status:** `OPEN — UNVERIFIED AGAINST CHECKPOINT` (Verify in M1 — Issue `#3`)
 - **Location:** `scalar::rope_inplace_f32` in [`src/kernels/scalar/kernels_scalar.cpp`](../../src/kernels/scalar/kernels_scalar.cpp)
-- **Description:** `rope_inplace_f32` implements the Hugging Face Llama `rotate_half` convention, pairing element `i` with `i + head_dim / 2` (`i = 0..31` with `32..63`). Upstream `TinyLlama/TinyLlama-1.1B-Chat-v1.0` uses Hugging Face `LlamaForCausalLM` (`rotate_half`), whereas `llama.cpp` GGUF conversion permutes Q and K projection weights to interleave `(2i, 2i+1)`. Because we convert directly from Hugging Face `.safetensors` without GGUF weight permutation, `rotate_half` is expected to match directly—**this must be verified against Layer 0 Q/K golden reference tensors in M1**.
+- **Description:** `rope_inplace_f32` implements the Hugging Face Llama `rotate_half` convention, pairing element `i` with `i + head_dim / 2` (`i = 0..31` with `32..63`). Since `convert_to_inference_engine.py` preserves unpermuted Hugging Face `.safetensors` row layout directly, `rotate_half` is expected to match directly—verify against Layer 0 Q/K golden reference tensors in M1.
 
 ### KI-007: `Q4_0` Rounding Parity with Upstream GGML
 - **Status:** `OPEN — UNVERIFIED AGAINST EXTERNAL REFERENCE` (Verify in M1/M2 — Issue `#2`)
 - **Location:** `quantize_row_q4_0` in [`src/kernels/quant_q4_0.cpp`](../../src/kernels/quant_q4_0.cpp)
-- **Description:** `quantize_row_q4_0` computes `std::clamp(static_cast<int>(std::floor(x0 + 8.5f)), 0, 15)` (matching GGML's `(int8_t)(x0 + 8.5f)` for non-negative `x0 + 8.5f`). Edge-case negative values where `x0 + 8.5f < 0.0f` clamp to `0` under both `floor` and truncation, but bit-exact block parity must be verified against an independent reference in M2.
+- **Description:** Verify bit-exact `BlockQ4_0` output against an independent reference implementation in M2.
 
 ---
 
 ## 3. Environment, Build & Workflow Issues
 
 ### KI-008: Python Dependencies & SentencePiece C++ Library Not Installed in Default Host Env
-- **Status:** `OPEN`
+- **Status:** `PARTIALLY RESOLVED`
 - **Description:**
-  - Host `/opt/homebrew/bin/python3` (`Python 3.14.6`) lacks `torch`, `transformers`, `safetensors`, `sentencepiece`, and `numpy`.
-  - Host Conda environment `/Users/shreyaas/cwq/miniconda3` has `torch 2.8.0` and `numpy 2.2.6`, but still needs `transformers`, `safetensors`, and `sentencepiece` installed before running offline M1 scripts.
-  - Homebrew `sentencepiece` C++ formula is not yet installed on S's machine.
+  - `tools/inspect_checkpoint.py` and `tools/convert_to_inference_engine.py` were engineered to work with **zero external Python packages** (pure-Python `struct`/`array` `BF16 -> FP32` path) while automatically using `numpy` (`/Users/shreyaas/cwq/miniconda3/bin/python`) for vectorized C-speed conversion when available.
+  - `transformers` and `sentencepiece` (Python) and Homebrew `sentencepiece` (C++) are still required before running `generate_golden_reference.py` (Issue `#3`) and linking `Tokenizer` (Issue `#4`).
 
 ### KI-009: Unstaged EOF Newline Diffs in Working Tree
-- **Status:** `OPEN`
-- **Description:** After commit `cb85411`, the IDE added a trailing blank line (`1 +`) to 53 tracked files in the working tree. Before starting M1 code work on a feature branch, run `git checkout -- .` (after committing the new context-transfer documentation files) so the working tree is completely clean.
-
+- **Status:** `RESOLVED` (Fixed prior to commit `60b103e` on `feature/model-loader`)
+- **Evidence:** Identified all 52 EOF-only modified tracked files via `git diff --numstat`, restored them cleanly without touching the 2 modified documentation files or 14 untracked context files, and committed `60b103e`.

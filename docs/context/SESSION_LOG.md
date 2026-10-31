@@ -45,3 +45,23 @@
 - **Remaining Work:**
   - Commit the context-transfer documentation when requested by the user, switch to a `feature/*` branch, and begin Milestone M1 tasks (`NEXT_ACTIONS.md` Priorities 1–4).
 
+
+---
+
+## Session 003 — 2026-10-31 (18:09–18:26 IST)
+- **Engineer / Agent:** S (`shreyaas5`) + Antigravity (Implementation Engineer for Member S on `feature/model-loader`)
+- **Objective:** Clean up the working tree, commit the context-transfer documentation (`60b103e`), and implement Milestone M1 Issue `#1` (TinyLlama Safetensors-to-`.ie` FP32 conversion and C++ tensor binding validation).
+- **Files Changed on `feature/model-loader`:**
+  - `include/inference_engine/loader.hpp` — Added `LayerWeightBindings`, `TransformerWeightBindings`, `ModelLoader::validate_tensor_binding()`, and `ModelLoader::bind_transformer_weights()`.
+  - `src/loader/loader.cpp` — Implemented `validate_tensor_binding()` and `bind_transformer_weights()` (`3 + 9 * num_layers` inventory verification), `NaN`/`Inf` header hyperparameter rejection, trailing-byte validation, and checked directory size arithmetic in `build_ie_image()`.
+  - `tools/inspect_checkpoint.py` — Implemented local `.safetensors` header & offset validation, `.ie` v1 binary inspection (`--ie-file`), and live Hugging Face HTTP Range header inspection (`--inspect-remote-hf`).
+  - `tools/convert_to_inference_engine.py` — Implemented two-pass streaming `BF16/F16/F32 -> FP32` conversion (`convert_safetensors_to_ie_fp32`), preserving exact tensor ordering and dimensions in 4 MiB chunks without loading multiple full model copies into RAM.
+  - `tests/test_loader_validation.cpp` — Added 12 malformed-file rejection checks, a 21-tensor (`num_layers = 2`) `mmap` reload + `bind_transformer_weights()` + bit-exact `FP32` preservation test, and external `.ie` model verification via `INFERENCE_ENGINE_TEST_IE_PATH`.
+  - Updated context documents: `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/NEXT_ACTIONS.md`, `docs/context/TECHNICAL_CONTEXT.md`, `docs/context/SESSION_LOG.md`.
+- **Tests Run & Results:**
+  - `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel 4`: Zero warnings.
+  - `ctest --test-dir build --output-on-failure`: **7/7 suites passed**.
+  - `python3 tools/inspect_checkpoint.py --inspect-remote-hf`: Verified all 201 `BF16` tensors (`2,200,096,768` bytes) in `TinyLlama/TinyLlama-1.1B-Chat-v1.0`.
+  - `python3 tools/convert_to_inference_engine.py --self-test` + C++ `INFERENCE_ENGINE_TEST_IE_PATH` reload: Verified end-to-end streaming `.safetensors -> .ie` conversion and C++ `mmap` binding across 21 tensors (`363,840` bytes).
+- **Remaining Work:**
+  - Offline download of the full 2.20 GB `model.safetensors` file to generate the 4.40 GB `tinyllama-1.1b-fp32.ie` artifact locally; Member U's Issue `#3` (causal GQA + 22-layer forward pass) and Member P's Issue `#4` (SentencePiece C++ link).

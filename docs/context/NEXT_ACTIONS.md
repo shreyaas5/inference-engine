@@ -1,27 +1,27 @@
 # `NEXT_ACTIONS.md` — Dependency-Ordered Engineering Backlog
 
-**Last Updated:** 2026-10-31  
-**Current Phase:** Milestone M1 (`m1-fp32`) Kickoff
+**Last Updated:** 2026-10-31T18:25:00+05:30  
+**Current Phase:** Milestone M1 (`m1-fp32`) — Priority 0 & Priority 1 Completed on `feature/model-loader`
 
 ---
 
 ## Priority 0 — Immediate Repository Hygiene (Before Writing M1 Code)
 
-- [ ] **0.1 Commit Context-Transfer System & Clean Working Tree:**
-  - Discard the IDE's 1-line EOF newline diffs on existing code files (`git checkout -- CMakeLists.txt .gitignore .github/ fixtures/ include/ src/ tests/ tools/`), stage the context-transfer documentation (`AGENTS.md`, `PROJECT_CONTEXT.md`, `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `DECISIONS.md`, `ROADMAP.md`, `TEAM_STATUS.md`, `docs/DECISION_LOG.md`, `docs/context/*.md`), and commit when approved by the user.
-- [ ] **0.2 Check Out Target Feature Branch:**
-  - Never work on `main`. Check out `feature/model-loader` (S), `feature/transformer` (U), `feature/quantisation-simd` (I), or `feature/runtime-tokenizer` (P).
+- [x] **0.1 Commit Context-Transfer System & Clean Working Tree:**
+  - *Completed in commit `60b103e` on `feature/model-loader` (restored the 52 EOF-only diffs and committed all 16 context-transfer documentation files).*
+- [x] **0.2 Check Out Target Feature Branch:**
+  - *Completed: active branch is `feature/model-loader`.*
 
 ---
 
 ## Priority 1 — FP32 Checkpoint Inspection, Conversion & Loading (Owner: S, Issue `#1`)
 
-- [ ] **1.1 Set Up Offline Python Environment:**
-  - Install `safetensors`, `transformers`, and `sentencepiece` inside the local Conda environment (`/Users/shreyaas/cwq/miniconda3`, which already has `torch 2.8.0` and `numpy 2.2.6`).
-- [ ] **1.2 Complete `tools/inspect_checkpoint.py`:**
-  - Parse `.safetensors` headers directly to print all 201 tensor names, dtypes (`BF16`), shapes, and byte sizes without loading full multi-gigabyte weights into memory at once.
-- [ ] **1.3 Implement Full `FP32` Conversion in `tools/convert_to_inference_engine.py`:**
-  - Read `TinyLlama-1.1B-Chat-v1.0` `.safetensors`, cast `BF16 -> FP32`, align each payload to 64 bytes (`align_up(offset, 64)`), write the `.ie` v1 binary file, and verify that `ModelLoader::load_from_file()` maps all 201 tensors cleanly.
+- [x] **1.1 Zero-Dependency & NumPy-Accelerated Python Converter Setup:**
+  - *Completed: `tools/inspect_checkpoint.py` and `tools/convert_to_inference_engine.py` run on both standard Python 3 and Conda `numpy` without requiring heavy third-party packages.*
+- [x] **1.2 Complete `tools/inspect_checkpoint.py` & Verify Real TinyLlama Tensor Inventory:**
+  - *Completed: verified all `201` tensors (`3 + 9 * 22`, `BF16`, `2,200,096,768` payload bytes) and `config.json` from `TinyLlama/TinyLlama-1.1B-Chat-v1.0` via `--inspect-remote-hf`.*
+- [x] **1.3 Implement Streaming `FP32` Conversion (`tools/convert_to_inference_engine.py`) & C++ Tensor Binding (`ModelLoader::bind_transformer_weights`):**
+  - *Completed: implemented two-pass streaming `BF16 -> FP32` conversion to 64-byte aligned `.ie` v1 files, added `TransformerWeightBindings` and `ModelLoader::bind_transformer_weights()`, and verified end-to-end Python conversion -> C++ `mmap` reload and bit-exact `FP32` preservation in `tests/test_loader_validation.cpp`.*
 
 ---
 
@@ -49,8 +49,8 @@
 
 ## Priority 4 — Full 22-Layer TinyLlama Forward Pass (Owner: U, Issue `#3`)
 
-- [ ] **4.1 Bind `.ie` Tensor Views in `TransformerEngine::init()`:**
-  - Resolve and validate pointers/views for `model.embed_tokens.weight`, all 22 layers' 9 tensors (`input_layernorm`, `q_proj`, `k_proj`, `v_proj`, `o_proj`, `post_attention_layernorm`, `gate_proj`, `up_proj`, `down_proj`), `model.norm.weight`, and `lm_head.weight`.
+- [ ] **4.1 Call `ModelLoader::bind_transformer_weights()` in `TransformerEngine::init()`:**
+  - Use the new `TransformerWeightBindings` API from `include/inference_engine/loader.hpp` to bind `embed_tokens`, all 22 layers' 9 tensors, `final_norm`, and `lm_head`.
 - [ ] **4.2 Implement Pre-Allocated Activation Workspace & `TransformerEngine::forward_token()`:**
   - Allocate reusable `FP32` activation buffers in `init()` (zero heap allocations during `forward_token()`) and implement the full 22-layer forward pass in `src/transformer/transformer.cpp`.
 - [ ] **4.3 Synthetic Small-Model End-to-End Test:**
@@ -87,4 +87,3 @@
 
 - [ ] **8.1 Complete Interactive/Batch CLI & `--benchmark` Harness in `src/app/main.cpp`.**
 - [ ] **8.2 Run Standardized CPU Benchmarks on All 4 Laptops (S, I, U, P) and Compare Against `llama.cpp`.**
-

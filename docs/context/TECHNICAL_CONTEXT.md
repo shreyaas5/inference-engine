@@ -24,10 +24,11 @@
 
 ## 2. Canonical Tensor Naming & Shapes (201 Tensors)
 
-- **Status:** **PLANNED FOR M1** (to be verified against local checkpoint via `tools/inspect_checkpoint.py` and bound in `src/transformer/transformer.cpp`).
-- **Expected Hugging Face / `.ie` Tensor Names & Shapes (`[out_dim, in_dim]` in row-major order):**
-  - `model.embed_tokens.weight`: `[32000, 2048]` (`FP32` in M1; `FP32` or `Q4_0` in M2)
-  - For each `i` in `0 .. 21` (22 layers $\times$ 9 tensors = 198 tensors):
+- **Status:** **VERIFIED AGAINST REAL CHECKPOINT & IN CODE** ([`tools/inspect_checkpoint.py`](../../tools/inspect_checkpoint.py), [`tools/convert_to_inference_engine.py`](../../tools/convert_to_inference_engine.py), `ModelLoader::bind_transformer_weights()` in [`src/loader/loader.cpp`](../../src/loader/loader.cpp)).
+- **Verified `TinyLlama/TinyLlama-1.1B-Chat-v1.0` `model.safetensors` Inventory (`23,088`-byte header, `2,200,096,768` bytes `BF16` payload, `3 + 9 * num_layers = 201` tensors):**
+  - `lm_head.weight`: `[32000, 2048]` (source `BF16`, offsets `[0, 131072000]`; `FP32` in M1; `FP32` or `Q4_0` in M2; untied from `embed_tokens`)
+  - `model.embed_tokens.weight`: `[32000, 2048]` (source `BF16`, offsets `[131072000, 262144000]`; `FP32` in M1; `FP32` or `Q4_0` in M2)
+  - For each `i` in `0 .. 21` (22 layers $\times$ 9 tensors = 198 tensors; stored in `.safetensors` in per-layer order `input_layernorm`, `mlp.down_proj`, `mlp.gate_proj`, `mlp.up_proj`, `post_attention_layernorm`, `self_attn.k_proj`, `self_attn.o_proj`, `self_attn.q_proj`, `self_attn.v_proj`):
     - `model.layers.{i}.input_layernorm.weight`: `[2048]` (`FP32`)
     - `model.layers.{i}.self_attn.q_proj.weight`: `[2048, 2048]` (`FP32` in M1, `Q4_0` in M2)
     - `model.layers.{i}.self_attn.k_proj.weight`: `[256, 2048]` (`FP32` in M1, `Q4_0` in M2)
@@ -37,9 +38,8 @@
     - `model.layers.{i}.mlp.gate_proj.weight`: `[5632, 2048]` (`FP32` in M1, `Q4_0` in M2)
     - `model.layers.{i}.mlp.up_proj.weight`: `[5632, 2048]` (`FP32` in M1, `Q4_0` in M2)
     - `model.layers.{i}.mlp.down_proj.weight`: `[2048, 5632]` (`FP32` in M1, `Q4_0` in M2)
-  - `model.norm.weight`: `[2048]` (`FP32`)
-  - `lm_head.weight`: `[32000, 2048]` (`FP32` in M1; `FP32` or `Q4_0` in M2; untied from `embed_tokens` in TinyLlama-1.1B-Chat-v1.0)
-  - **Total Tensors:** $1 + (22 \times 9) + 1 + 1 = 201$ tensors. (All innermost dimensions `2048` and `5632` are multiples of `32`, satisfying `Q4_0` block constraints.)
+  - `model.norm.weight`: `[2048]` (source `BF16`, offsets `[2200092672, 2200096768]`; `FP32` in `.ie`)
+  - **Total Tensors:** $3 + (22 \times 9) = 201$ tensors (`1,100,048,384` parameters = `4,400,193,536` payload bytes in `FP32`).
 
 ---
 
