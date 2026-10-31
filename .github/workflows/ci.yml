@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - integration
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+      - integration
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu x86_64 (GCC / AVX2)
+            os: ubuntu-latest
+            build_type: Release
+          - name: macOS ARM64 (AppleClang / NEON)
+            os: macos-14
+            build_type: Release
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DINFERENCE_ENGINE_BUILD_TESTS=ON
+
+      - name: Build targets
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel 2
+
+      - name: Run deterministic CTest unit suites
+        run: ctest --test-dir build --output-on-failure --build-config ${{ matrix.build_type }}
+
+      - name: Verify CLI binary smoke check
+        run: |
+          ./build/inference-engine --help
+          ./build/inference-engine --info
+
+      - name: Run offline Python tool contract self-tests
+        run: |
+          python3 tools/inspect_checkpoint.py --print-frozen-contract
+          python3 tools/convert_to_inference_engine.py --self-test
+          python3 tools/verify_tokenizer_parity.py --self-test

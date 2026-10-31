@@ -1,0 +1,66 @@
+# Build directories
+build/
+build-*/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+Makefile
+compile_commands.json
+
+# Binaries, libraries, object files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+inference-engine
+inference_engine_tests
+
+# Model weights, checkpoints, and large artifacts (NEVER COMMIT)
+*.ie
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.gguf
+*.onnx
+*.model
+models/
+checkpoints/
+artifacts/
+golden_outputs/
+fixtures/*.ie
+fixtures/*.bin
+fixtures/*.npy
+fixtures/*.npz
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+
+# IDEs and OS files
+.vscode/
+.idea/
+.vs/
+.clangd/
+.cache/
+.DS_Store
+Thumbs.db
+*.swp
+*~
