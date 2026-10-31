@@ -1,11 +1,16 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "inference_engine/common.hpp"
+
+namespace sentencepiece {
+class SentencePieceProcessor;
+}
 
 namespace inference_engine {
 
@@ -40,6 +45,7 @@ public:
 private:
     bool loaded_ = false;
     std::string model_path_{};
+    std::shared_ptr<sentencepiece::SentencePieceProcessor> processor_{};
 };
 
 }  // namespace inference_engine

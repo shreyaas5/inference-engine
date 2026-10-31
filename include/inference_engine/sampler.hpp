@@ -13,7 +13,9 @@ struct SamplerConfig {
 
 class Sampler {
 public:
-    explicit Sampler(SamplerConfig config = {}) noexcept : config_(config), rng_state_(config.seed) {}
+    explicit Sampler(SamplerConfig config = {}) noexcept
+        : config_(config),
+          rng_state_(config.seed == 0 ? 0x9E3779B97F4A7C15ULL : config.seed) {}
 
     // Deterministic greedy argmax over `vocab_size` logits.
     // Ties are broken by selecting the lowest token index.
@@ -27,6 +29,9 @@ public:
 private:
     SamplerConfig config_{};
     uint64_t rng_state_ = 42;
+
+    uint64_t next_random() noexcept;
+    double uniform_random() noexcept;
 };
 
 }  // namespace inference_engine

@@ -17,10 +17,10 @@
 - **Location:** `scalar::gqa_attention_f32` in [`src/kernels/scalar/kernels_scalar.cpp`](../../src/kernels/scalar/kernels_scalar.cpp) and [`include/inference_engine/kernels.hpp`](../../include/inference_engine/kernels.hpp)
 - **Evidence:** Implemented in commit `5115467` and unit-tested in `tests/test_kernels_scalar.cpp` and `tests/test_golden_forward.cpp`.
 
-### KI-003: `Tokenizer::encode()` and `decode()` Use a Synthetic Byte-Offset Stub
-- **Status:** `OPEN` (Scheduled for M1 — Issue `#4`, Owner: **P**)
+### KI-003: SentencePiece Tokenizer Has Not Passed Model-Backed Build/Parity Validation
+- **Status:** `OPEN — IMPLEMENTED IN WORKTREE, VALIDATION PENDING` (Issue `#4`, Owner: **P**)
 - **Location:** [`src/tokenizer/tokenizer.cpp`](../../src/tokenizer/tokenizer.cpp), [`CMakeLists.txt`](../../CMakeLists.txt)
-- **Description:** SentencePiece C++ is not linked yet. `encode()` pushes `static_cast<int32_t>(c) + 3` per byte so M0 BOS/EOS unit tests can run without external files.
+- **Description:** SentencePiece C++ integration now replaces the `byte + 3` fallback, validates the TinyLlama vocabulary and special-token IDs, and handles `<unk>`, `<s>`, and `</s>` as exact special tokens. The model-backed CTest and Hugging Face parity harness have not yet been run against the C++ binary.
 
 ### KI-004: Offline Python Scripts (`convert_to_inference_engine.py`, `generate_golden_reference.py`) Are Stubs
 - **Status:** `PARTIALLY RESOLVED` (`convert_to_inference_engine.py` FP32, `inspect_checkpoint.py`, and `generate_golden_reference.py` binary fixture generator are **IMPLEMENTED & SELF-TESTED**; `Q4_0` conversion in `convert_to_inference_engine.py` remains `OPEN` for M2, and running `generate_golden_reference.py` on the real 2.20 GB checkpoint remains `OPEN` for M1)
@@ -70,7 +70,12 @@
 
 ### KI-008: Python Dependencies & SentencePiece C++ Library Not Installed in Default Host Env
 - **Status:** `PARTIALLY RESOLVED`
-- **Description:** Python `transformers` + `sentencepiece` and C++ `sentencepiece` (`brew install sentencepiece`) are still required for real Hugging Face golden generation and Issue `#4`.
+- **Description:** CMake discovers SentencePiece >=0.2.0 through pkg-config or fetches a pinned upstream revision. CI installs the Python Hugging Face parity dependencies. This Windows host has Python and MinGW but no CMake/CTest, so full validation is still blocked here.
 
 ### KI-009: Unstaged EOF Newline Diffs in Working Tree
 - **Status:** `RESOLVED`
+
+### KI-014: Full Feature-Branch Build and Parity Run Not Yet Available Locally
+- **Status:** `OPEN — ENVIRONMENT VALIDATION BLOCKER`
+- **Location:** `CMakeLists.txt`, `.github/workflows/ci.yml`
+- **Description:** The local CMake Tools build returned `-1` without output and no CMake diagnostics were reported; CMake and CTest are not on PATH. The available MinGW standard library also lacks `<string_view>`, so it cannot compile the full C++17 project. The focused sampler test and parity script's offline self-test passed, but the complete build, model-backed CTest, Hugging Face parity, and real TinyLlama inference must be validated in CI or a configured development environment.

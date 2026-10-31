@@ -1,54 +1,37 @@
 # `SESSION_HANDOFF.md` — Immediate Continuation Instructions
 
-**Last Updated:** 2026-10-31T19:25:00+05:30  
-**Last Session Role:** Senior C++ Systems Engineer & Code Reviewer (Integration of Member I's Quantisation & SIMD Work into `integration`)
+**Last Updated:** 2026-10-31
+**Last Session Role:** P — Tokenizer, Sampler, CLI & Benchmarking
+**Active Branch:** `feature/runtime-tokenizer`, based on `origin/integration` at `783b8f4`
 
 ---
 
-## 1. What We Did in This Session (Session 005)
+## 1. Work Completed in This Session
 
-1. **Audited and Merged Member I's Quantisation, SIMD, and Threading Branch:**
-   - Reviewed `origin/feature/quantisation-simd` (`f76ab55`, containing commits `a948734` and `f76ab55`).
-   - Verified Q4_0 18-byte format, low/high nibble split, signed clamp math, and bit-exact parity against upstream GGML logic (`KI-007`).
-   - Verified NEON Q4_0 vectorization (`compute_block_unscaled_dot_neon`, `neon::dot_q4_0_f32`, `neon::matmul_q4_0_f32`) natively on Apple M4 ARM64.
-   - Verified AVX2/FMA vector implementation and CPUID runtime detection code.
-   - Verified ThreadPool task chunking optimization eliminating lock contention.
-   - Merged `origin/feature/quantisation-simd` (`f76ab55`) into `integration` via merge commit `967f072`.
-2. **Validated Release Build & CTest Suites:**
-   - Clean Release build: 0 compiler warnings.
-   - All 7 CTest suites passed (`loader_validation`, `quant_packing`, `kernels_scalar`, `kernels_simd`, `kv_cache`, `tokenizer`, `golden_forward`).
-3. **Pushed Integration Branch to GitHub:**
-   - Pushed `integration` to `origin/integration`.
+- Refreshed remote refs and fast-forwarded the clean feature branch from `cb85411` to `783b8f4`; no push or commit was made.
+- Replaced the byte-offset tokenizer stub with SentencePiece C++ load/encode/decode. `Tokenizer::load()` verifies TinyLlama's 32000-piece vocabulary and `<unk>/<s></s>` IDs; the encoder and decoder handle those special tokens separately from ordinary text.
+- Implemented the TinyLlama chat template from the pinned `tokenizer_config.json`; role markers are rendered as ordinary text and are not treated as special tokens.
+- Added seeded temperature/top-p sampling, deterministic greedy behavior, and invalid-logit handling.
+- Implemented the FP32 CLI model-loading, prompt-prefill, generation, EOS/context-limit handling, encode/decode/template utility modes, and single-run benchmark metrics.
+- Added SentencePiece package discovery with a pinned upstream CMake fallback, model-backed tokenizer tests, a separate sampler CTest suite, and a Hugging Face parity harness/CI setup.
+- Updated project status, decisions, technical context, and benchmark documentation.
 
----
+## 2. Validation Performed
 
-## 2. What Is Currently Working on `integration` (Verified)
+- The parity Python file parsed successfully and `tools/verify_tokenizer_parity.py --self-test` passed.
+- `sampler.cpp` and `test_sampler.cpp` compiled with MinGW C++17 and `-Wall -Wextra -Wpedantic`; focused sampler tests passed.
+- Full CMake/CTest was **not run**. CMake and CTest are unavailable on this host; the CMake Tools build returned `-1` without output and the diagnostics panel was empty. The available MinGW standard library also lacks `<string_view>`, blocking full-project translation-unit compilation.
+- Full Hugging Face/C++ tokenizer parity and real TinyLlama inference are **not verified**.
 
-- **Model Loader & Converter (S):** Full `.ie` v1 binary parser, `mmap` zero-copy loader, 201-tensor validation, streaming `BF16 -> FP32` converter.
-- **Scalar Transformer & Causal GQA (U):** Full 16-step forward pass, GQA attention kernel, KV cache commit separation, independent NumPy parity verified.
-- **Quantisation & SIMD Kernels (I):**
-  - Q4_0 block packing/dequantisation with verified GGML bit-exact reference parity.
-  - ARM64 NEON Q4_0 & FP32 dot/matmul kernels verified natively.
-  - x86-64 AVX2/FMA Q4_0 & FP32 kernels implemented and guarded with runtime CPU feature detection.
-  - Persistent ThreadPool with dynamic task chunking.
-  - Dispatched matmul: `dispatch_matmul_q4_0_f32` and `dispatch_matmul_f32`.
+## 3. Known Limits
 
----
+- The full test suite now contains 8 suites; `tokenizer` requires `build/tokenizer/tokenizer.model`.
+- CI downloads the pinned TinyLlama tokenizer model/config and is configured to run the full CTest suite plus the Hugging Face parity script.
+- `TransformerEngine` currently accepts FP32 weights and ignores the requested thread count. The CLI warns when `--threads` is greater than one.
+- A real converted TinyLlama `.ie` checkpoint is not available in this checkout, so no end-to-end model inference or benchmark result can be claimed.
 
-## 3. What Remains Pending / Important Limitations
+## 4. Next Actions
 
-- **AVX2/FMA Native Verification:** Requires testing on an x86-64 CPU (Member I's machine or GitHub Actions runner).
-- **TransformerEngine Q4_0 Dispatch:** `TransformerEngine::forward_token` still uses `scalar::matmul_f32` directly and requires `FP32` weights. Wiring `dispatch_matmul_q4_0_f32` into the transformer forward loop is scheduled for Milestone M2/M3.
-- **Actual TinyLlama Q4_0 Inference:** Offline `--dtype q4_0` export in `convert_to_inference_engine.py` and running inference on real quantised weights is not yet validated.
-- **SentencePiece C++ Tokenizer (P):** `src/tokenizer/tokenizer.cpp` still uses the M0 byte-offset stub.
-- **Main Branch:** `main` is at `177fe49` (contains M1 FP32 baseline; I's work is on `integration`, ready for M2).
-
----
-
-## 4. Next Task
-
-- **For Member P (`feature/runtime-tokenizer` — Issue `#4`):**
-  - Merge `integration` into `feature/runtime-tokenizer`, integrate SentencePiece C++, and wire the CLI generation loop in `src/app/main.cpp`.
-- **For Milestone M2 (Quantisation Integration):**
-  - Wire `dispatch_matmul_q4_0_f32` and `ThreadPool` into `TransformerEngine::forward_token()`.
-  - Add `--dtype q4_0` export to `tools/convert_to_inference_engine.py`.
+1. Run the feature branch CI/build and fix any CMake, SentencePiece, tokenizer, or CLI failures. Confirm all 8 CTest suites and the full Hugging Face parity check pass.
+2. Coordinate with S and U to run the CLI with the real FP32 TinyLlama checkpoint and validate generation against the Hugging Face reference.
+3. Keep Q4_0 conversion/Transformer dispatch and multi-laptop benchmark comparisons pending until their owners integrate and validate those paths.

@@ -104,3 +104,26 @@
   - Multi-threaded SIMD benchmark in `kernels_simd` verified task chunking scaling from 1 to 16 threads.
 - **Publication:**
   - Pushed `integration` to `origin/integration` (`cb85411..4e3146e..` now pointing to `integration`).
+
+---
+
+## Session 006 — 2026-10-31 (P — Tokenizer, Sampler, CLI & Benchmarking)
+
+- **Objective:** Continue Member P's Issue `#4` on `feature/runtime-tokenizer`, first synchronizing with current `integration`, then implementing SentencePiece, sampling, and the CLI generation path.
+- **Repository State:**
+  - Verified the local branch initially pointed to M0 `cb85411`; fetched remote refs and fast-forwarded the clean feature branch to `origin/integration` `783b8f4`.
+  - No commit or push was made. P's feature changes remain in the working tree.
+  - Read `AGENTS.md`, the integration handoff/status/context files, and `DECISIONS.md`.
+- **Implementation:**
+  - Added SentencePiece C++ discovery (pkg-config >=0.2.0) with a pinned upstream fallback, TinyLlama vocabulary/special-ID checks, explicit special-token encoding/decoding, and model-backed tokenizer tests.
+  - Added seeded temperature/top-p sampling with NaN/infinity handling and a dedicated `sampler` CTest.
+  - Replaced the CLI placeholder with FP32 model loading, chat formatting, prompt prefill, autoregressive decode at the correct positions, EOS/context handling, tokenize/decode utility modes, and single-run benchmark metrics.
+  - Added a Hugging Face tokenizer parity tool and CI download/test steps for the tokenizer assets pinned at revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`.
+- **Validation:**
+  - Python AST syntax check and tokenizer template `--self-test`: **PASS**.
+  - Focused MinGW compile/run of `sampler.cpp` + `test_sampler.cpp` with C++17 and `-Wall -Wextra -Wpedantic`: **PASS**.
+  - CMake Tools build: returned `-1` without output; CMake diagnostics: none. CMake/CTest are unavailable on this host.
+  - Full 8-suite CTest, Hugging Face parity, and real TinyLlama inference: **NOT RUN**.
+- **Remaining Work:**
+  - Run the configured CI build and fix any failures; confirm all 8 CTest suites and full tokenizer parity pass.
+  - Run the CLI against an actual converted FP32 TinyLlama checkpoint with S/U. No real inference or benchmark performance is claimed yet.

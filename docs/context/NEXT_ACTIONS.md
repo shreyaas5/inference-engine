@@ -1,7 +1,7 @@
 # `NEXT_ACTIONS.md` — Dependency-Ordered Engineering Backlog
 
-**Last Updated:** 2026-10-31T19:25:00+05:30  
-**Current Phase:** Milestone M1 (`m1-fp32`) on `main`; Milestone M2/M3 kernels merged on `integration`
+**Last Updated:** 2026-10-31
+**Current Phase:** Milestone M1 (`m1-fp32`); P is implementing tokenizer/runtime on `feature/runtime-tokenizer`, based on `integration` at `783b8f4`
 
 ---
 
@@ -33,10 +33,12 @@
 ## Priority 3 — Tokenizer Parity & SentencePiece Integration (Owner: P, Issue `#4` — Next Active Blocker)
 
 - [x] **3.1 TinyLlama Zephyr Chat Template (`Tokenizer::format_chat_prompt`).**
-- [ ] **3.2 Link SentencePiece C++ in `CMakeLists.txt` & `src/tokenizer/tokenizer.cpp`:**
-  - Install/discover `sentencepiece` C++ library (`find_package` / `pkg-config` / Homebrew `/opt/homebrew`), replace the M0 `byte + 3` fallback in `Tokenizer::encode()` and `Tokenizer::decode()` with `sentencepiece::SentencePieceProcessor`, and keep unit tests green.
-- [ ] **3.3 Verify Exact Tokenizer Parity (`tools/verify_tokenizer_parity.py`):**
-  - Compare token IDs, BOS/EOS handling, whitespace (`▁`), byte fallback (`<0x..>`), and chat template rendering against Hugging Face `AutoTokenizer.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")`.
+- [ ] **3.2 Link SentencePiece C++ in `CMakeLists.txt` & `src/tokenizer/tokenizer.cpp` (implemented in working tree; build/test pending):**
+  - CMake discovers SentencePiece >=0.2.0 through pkg-config or fetches a pinned upstream revision. The tokenizer validates TinyLlama's 32000-piece vocabulary and special-token IDs and handles model special tokens explicitly.
+- [ ] **3.3 Verify Exact Tokenizer Parity (`tools/verify_tokenizer_parity.py`; harness implemented, full run pending):**
+  - Compare IDs, BOS/EOS, whitespace, byte fallback/Unicode, decode output, and chat template against Hugging Face using the pinned `tokenizer.model` and `tokenizer_config.json`.
+- [ ] **3.4 Verify Greedy, Temperature, Top-p, Seed Reproducibility, and Invalid Logits:**
+  - Focused MinGW sampler test passed; full CTest build remains pending.
 
 ---
 
@@ -71,5 +73,5 @@
 
 ## Priority 7 — CLI, Four-Laptop Benchmarking & `llama.cpp` Comparison (Owner: P & All, Milestone M4)
 
-- [ ] **7.1 Complete Interactive/Batch CLI & `--benchmark` Harness in `src/app/main.cpp`.**
+- [ ] **7.1 Validate the FP32 generation CLI and `--benchmark` harness (`src/app/main.cpp` implementation is in the working tree; build/real-model validation pending).**
 - [ ] **7.2 Run Standardized CPU Benchmarks on All 4 Laptops (S, I, U, P) and Compare Against `llama.cpp`.**

@@ -1,24 +1,25 @@
 # `CURRENT_STATUS.md` — Single Source of Truth for Project Progress
 
-**Last Updated:** 2026-10-31T19:25:00+05:30  
-**Current Milestone:** `M1 — FP32 scalar inference` & `M2/M3 — Quantisation and SIMD` (In Progress — S's Loader `#1`, U's Transformer `#3`, and I's Quantisation & SIMD `#2` merged into `integration`)  
+**Last Updated:** 2026-10-31
+**Current Milestone:** `M1 — FP32 scalar inference` (P's tokenizer/runtime work in progress on `feature/runtime-tokenizer`; S, U, and I work is available on `integration`)
 **Maintainer:** S (Project Lead)
 
 ---
 
 ## 1. Git & Build State (Verified)
 
-- **Active Local Branch:** `integration`
+- **Active Local Branch:** `feature/runtime-tokenizer` at `783b8f4` (fast-forwarded to `origin/integration`; nine commits ahead of `origin/feature/runtime-tokenizer`).
 - **Branch State Summary:**
-  - `main`: `177fe49` (`Merge branch 'integration' into main`, matches `origin/main`)
+  - `main`: `177fe49` (`Merge branch 'integration' into main`)
   - `feature/model-loader`: `aa40368` (matches `origin/feature/model-loader`)
   - `feature/transformer`: `5115467` (matches `origin/feature/transformer`)
   - `feature/quantisation-simd`: `f76ab55` (matches `origin/feature/quantisation-simd`, merged into `integration`)
-  - `integration`: `967f072` (`Merge branch 'feature/quantisation-simd' into integration`) plus documentation updates.
-  - `feature/runtime-tokenizer`: `cb85411`
-- **Working Tree State:** Clean (`build/` ignored).
-- **CMake Build Status:** **PASSING** (`AppleClang 17.0.0.17000603`, `CMake 4.4.3`, zero compiler warnings with `-Wall -Wextra -Wpedantic`).
-- **CTest Suite Status:** **7 / 7 PASSING** on `integration` (verified on Apple M4 ARM64):
+  - `integration`: `783b8f4` (latest fetched integration tip).
+  - `origin/feature/runtime-tokenizer`: `cb85411`; this local feature branch is based on `783b8f4`.
+- **Working Tree State:** P's tokenizer/sampler/CLI changes and related docs are uncommitted; no model assets are tracked.
+- **Local Build Status:** **NOT VERIFIED.** CMake/CTest are unavailable in this Windows environment, and the available MinGW standard library lacks `<string_view>`. The CMake Tools build returned `-1` without output and the diagnostics panel was empty.
+- **Latest Baseline CTest:** **7 / 7 PASSING** on the upstream integration branch before P's changes. The current tree now defines 8 suites (adds `sampler`); it has not yet been run as a full CTest build.
+  Prior baseline suites:
   1. `loader_validation` — **PASSED** (12 malformed-file rejection checks + 21-tensor `mmap` reload, `bind_transformer_weights()`, and bit-exact `FP32` data preservation).
   2. `quant_packing` — **PASSED** (18-byte `BlockQ4_0`, nibble packing, zero-block, out-of-bounds, subnormal/inf FP16, and bit-exact upstream GGML reference parity).
   3. `kernels_scalar` — **PASSED** (Includes unit tests for `rmsnorm_f32`, `rope_inplace_f32`, `softmax_f32`, `swiglu_f32`, and multi-head `gqa_attention_f32`).
@@ -26,11 +27,15 @@
   5. `kv_cache` — **PASSED** (Separation of `append()` and `commit_token()`).
   6. `tokenizer` — **PASSED** (Zephyr chat template formatting).
   7. `golden_forward` — **PASSED** (Synthetic 2-layer `FP32` forward parity, prefill + autoregressive decode position contract, KV cache / GQA non-zero checks, and independent NumPy golden verification).
-- **Python Offline Tool Self-Tests:**
+- **Validation Run in This Session:**
+  - `tools/verify_tokenizer_parity.py` syntax check and `--self-test` — **PASSED**.
+  - `sampler.cpp` + `test_sampler.cpp` compiled with MinGW `-Wall -Wextra -Wpedantic` and ran — **PASSED**.
+  - Full CMake/CTest and real Hugging Face/C++ tokenizer parity — **NOT RUN** (CMake unavailable; CI is configured to run both).
+- **Previously Reported Python Offline Tool Self-Tests:**
   - `python3 tools/inspect_checkpoint.py --inspect-remote-hf` — **PASSED** (`201/201` `BF16` tensors in live `TinyLlama/TinyLlama-1.1B-Chat-v1.0` header verified).
   - `python3 tools/convert_to_inference_engine.py --self-test` — **PASSED**
   - `python3 tools/generate_golden_reference.py --self-test` — **PASSED**
-  - `python3 tools/verify_tokenizer_parity.py --self-test` — **PASSED**
+  - `python3 tools/verify_tokenizer_parity.py --self-test` — **PASSED** on the earlier branch baseline; the updated script also passed its offline self-test in this session.
 
 ---
 
@@ -53,6 +58,9 @@
     - Dispatched matmul: `dispatch_matmul_q4_0_f32` uses whole-matrix vector kernels when single-threaded and task-chunked multithreading when pooled.
 
 ### In-Progress / Stubbed (`IN PROGRESS` / `NOT STARTED` — Remaining M1–M4 Work)
+- **P Tokenizer, Sampler & CLI (`src/tokenizer/`, `src/sampler/`, `src/app/`):**
+  - SentencePiece C++ load/encode/decode, tokenizer-config-derived chat formatting, temperature/top-p sampling, and the prefill/decode CLI loop are implemented in the working tree.
+  - Focused sampler test and offline Python self-test passed. Full C++ build, tokenizer-model CTest, Hugging Face parity, and real checkpoint inference remain unverified.
 - **TransformerEngine Wiring to Q4_0 Dispatch (Milestone M2/M3):**
   - `TransformerEngine::forward_token()` currently invokes `scalar::matmul_f32` directly and requires `FP32` weights. Wiring `dispatch_matmul_q4_0_f32` and `ThreadPool` into `TransformerEngine` is scheduled for Milestone M2/M3.
 - **Full TinyLlama-1.1B Checkpoint Quantisation & Conversion (Milestone M2):**
@@ -60,10 +68,6 @@
   - Actual TinyLlama quantised inference has not yet been executed against real model weights.
 - **Native x86 AVX2/FMA Verification:**
   - AVX2/FMA vector code compiles cleanly with scalar fallbacks, but needs native test execution on an x86 CPU.
-- **SentencePiece C++ Tokenizer Integration (`src/tokenizer/tokenizer.cpp`, `CMakeLists.txt` — Owner: P, Issue `#4`):**
-  - `Tokenizer::encode()` and `decode()` still use the M0 synthetic byte-offset fallback (`byte + 3`).
-- **CLI Inference Loop (`src/app/main.cpp` — Owner: P):**
-  - Handles `--help` and `--info` only.
 
 ---
 
@@ -71,8 +75,8 @@
 
 1. **Real 2.20 GB `TinyLlama-1.1B-Chat-v1.0` Weight Payload Not Yet Downloaded Locally:**
    - Required before claiming real TinyLlama inference.
-2. **Missing SentencePiece C++ Library (`KI-003` / `KI-008`):**
-   - Needed for Issue `#4` (Member P).
+2. **P's Full Build and Tokenizer Parity Validation (`KI-003` / `KI-014`):**
+   - CMake is unavailable in the current Windows environment; run CI or install/configure CMake and rerun the model-backed CTest and Hugging Face parity check.
 3. **Follow-Up Technical Tasks:**
    - `KI-010`: Unify `TransformerEngine::init` with `ModelLoader::bind_transformer_weights()`.
    - `KI-012`: Wire `dispatch_matmul_*` and `ThreadPool` into `TransformerEngine::forward_token()` for M2/M3.
@@ -82,6 +86,6 @@
 
 ## 4. Next Three Engineering Priorities
 
-1. **[Owner: P — Issue #4] Integrate SentencePiece C++ Tokenizer (`src/tokenizer/tokenizer.cpp`, `CMakeLists.txt`) & Wire CLI Generation (`src/app/main.cpp`).**
+1. **[Owner: P — Issue #4] Build and validate SentencePiece integration, run full tokenizer parity, then verify the CLI with real FP32 weights when available.**
 2. **[Owners: S & U — Issues #1 & #3] Download Real `TinyLlama-1.1B-Chat-v1.0` Checkpoint, Convert to `.ie` FP32, and Run `tools/generate_golden_reference.py` + `golden_forward` CTest.**
 3. **[Owners: I & U — Milestone M2] Enable `Q4_0` Dispatch in `TransformerEngine::forward_token()` and Add `--dtype q4_0` Export to `tools/convert_to_inference_engine.py`.**

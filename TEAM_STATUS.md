@@ -1,6 +1,6 @@
 # `TEAM_STATUS.md` — Team Ownership, Branches, Issues & Status
 
-**Last Updated:** 2026-10-31T19:25:00+05:30  
+**Last Updated:** 2026-10-31
 *(Policy: Never invent progress updates or GitHub usernames for teammates. Only verified repository facts are recorded here.)*
 
 ---
@@ -12,7 +12,7 @@
 | **S** | Project Lead & Model Loader | Apple MacBook Air M4, 24 GB RAM, 1 TB SSD | macOS ARM64 (`NEON`) | `feature/model-loader` (`aa40368`, merged to `main`) | `shreyaas5` (GitHub) |
 | **I** | Quantisation & CPU Optimisation | AMD Ryzen 7 7745HX, RTX 4060, 16 GB RAM | x86-64 (`AVX2` + `FMA`) | `feature/quantisation-simd` (`f76ab55`, merged to `integration`) | `Ishaan <ishaan.mishra2308@gmail.com>` (Verified in commits `a948734` & `f76ab55`) |
 | **U** | Scalar Inference & Transformer | Intel Core Ultra 7 155H, 16 GB DDR5 | x86-64 (`AVX2` + `FMA`) | `feature/transformer` (`5115467`, merged to `main`) | `Utkarsh Gupta <utkarshgupta.vk@gmail.com>` (Verified in commit `5115467`) |
-| **P** | Tokenizer, Runtime & Benchmarks | Intel Core i5-10210U, 8 GB RAM | x86-64 (`AVX2` runtime checked) | `feature/runtime-tokenizer` (`cb85411`) | *Pending* |
+| **P** | Tokenizer, Runtime & Benchmarks | Intel Core i5-10210U, 8 GB RAM | x86-64 (`AVX2` runtime checked) | `feature/runtime-tokenizer` (local `783b8f4` base + uncommitted changes; remote feature still `cb85411`) | *Pending* |
 
 ---
 
@@ -48,6 +48,10 @@
 ---
 
 ### Member P — Tokenizer, Runtime & Benchmarks
-- **Feature Branch:** `feature/runtime-tokenizer` (currently at commit `cb85411`)
+- **Feature Branch:** `feature/runtime-tokenizer` (local branch fast-forwarded to `783b8f4`; P changes uncommitted; origin feature still at `cb85411`)
 - **Assigned GitHub Issue:** [#4 — `[M1][Owner: P] Integrate SentencePiece C++ processor and verify TinyLlama tokenizer & chat template parity`](https://github.com/shreyaas5/inference-engine/issues/4)
-- **Status:** **IN PROGRESS**. Next active critical path task.
+- **Status:** **IMPLEMENTED IN WORKTREE; VALIDATION PENDING**.
+  - SentencePiece C++ integration and pinned TinyLlama tokenizer parity harness are in place.
+  - Seeded temperature/top-p sampler and FP32 generation CLI are implemented.
+  - Focused sampler test and offline Python parity self-test passed.
+  - Pending: full CMake/CTest, Hugging Face parity, and inference with the real TinyLlama checkpoint. CMake/CTest are unavailable on the current host.

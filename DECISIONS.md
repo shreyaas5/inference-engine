@@ -92,9 +92,20 @@
 ## ADR-007: SentencePiece C++ Integration for Tokenization
 
 - **Date:** 2026-10-31
-- **Status:** Accepted (Pending M1 Implementation)
+- **Status:** Accepted (implemented in working tree; build/parity validation pending)
 - **Context:** TinyLlama uses a 32,000-token SentencePiece model (`tokenizer.model`) with byte fallback and Zephyr chat tags.
 - **Decision:** Integrate the upstream SentencePiece C++ processor in `src/tokenizer/tokenizer.cpp` for M1 rather than writing a custom BPE/Unigram parser from scratch, and verify 100% token ID parity against Hugging Face using `tools/verify_tokenizer_parity.py`.
 - **Alternatives Considered:** Custom C++ BPE tokenizer parser. Rejected because SentencePiece whitespace normalization (`▁`) and byte-fallback rules are intricate and non-core to neural matrix-math execution.
-- **Consequences:** M0 uses a byte-offset stub (`byte + 3`) for synthetic unit tests; M1 Issue `#4` tracks linking `libsentencepiece`.
+- **Consequences:** `Tokenizer` uses the upstream C++ processor, validates the TinyLlama vocabulary and special-token IDs, and handles those special tokens separately from ordinary SentencePiece text. `tools/verify_tokenizer_parity.py` performs model-backed Hugging Face comparisons; full parity evidence is still pending.
 
+## ADR-008: Reproducible SentencePiece Build Dependency
+
+- **Date:** 2026-10-31
+- **Status:** Accepted
+- **Context:** The tokenizer must use the upstream SentencePiece C++ implementation across supported build hosts without requiring a separately installed tokenizer library.
+- **Decision:**
+  - Prefer a system SentencePiece library only when pkg-config reports version `0.2.0` or newer.
+  - Otherwise fetch the upstream repository at commit `17d7580d6407802f85855d2cc9190634e2c95624` and build its static C++ library with optional tests/shared libraries/tcmalloc disabled.
+  - Keep the library out of the public tokenizer header through a forward-declared processor type.
+- **Alternatives Considered:** A custom tokenizer, relying only on Homebrew/apt installation instructions, or an unpinned latest upstream checkout. Rejected because these reduce compatibility, reproducibility, or ease of building.
+- **Consequences:** CI and developer builds can produce the same SentencePiece API implementation without committing tokenizer assets or vendor build outputs. Hugging Face tokenizer assets remain fetched only for verification and local inference.

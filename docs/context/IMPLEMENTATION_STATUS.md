@@ -1,7 +1,7 @@
 # `IMPLEMENTATION_STATUS.md` — Module-by-Module Truth Table
 
-**Last Updated:** 2026-10-31T19:25:00+05:30  
-**Branch:** `integration` (Merged S's `feature/model-loader`, U's `feature/transformer`, and I's `feature/quantisation-simd`)
+**Last Updated:** 2026-10-31
+**Branch:** `feature/runtime-tokenizer` (local branch fast-forwarded to `origin/integration` at `783b8f4`; P changes remain unverified)
 
 Allowed Status Labels:
 - `NOT STARTED` — No implementation exists yet (or CLI argument parser skeleton only).
@@ -29,6 +29,6 @@ Allowed Status Labels:
 | **KV Cache** | `include/inference_engine/kv_cache.hpp`, `src/core/kv_cache.cpp` | Yes | Yes | Yes (`kv_cache`) | Yes | No | `TESTED (SYNTHETIC)` | Contiguous `FP32` cache with strict separation between `append()` and `commit_token()`. |
 | **Transformer Forward Pass (`FP32` Scalar)** | `include/inference_engine/transformer.hpp`, `src/transformer/transformer.cpp` | Yes | Yes (`FP32` scalar complete; `Q4_0` wiring in M2/M3) | Yes (`golden_forward`) | Yes (C++ & independent NumPy reference, `max_diff = 6.56e-7`) | **No** (Pending real 2.2 GB TinyLlama checkpoint) | `REFERENCE VERIFIED (SYNTHETIC / METADATA)` | 16-step Llama decoder forward pass. `TransformerEngine` currently requires `FP32` weights and calls scalar matmul; wiring `dispatch_matmul_q4_0_f32` is planned for M2/M3. |
 | **Golden Reference Generator** | `tools/generate_golden_reference.py` | Yes | Yes | Yes (`--self-test`) | Yes (Verified with C++ `golden_forward` reader) | **No** (Pending local PyTorch run on real TinyLlama) | `TESTED (SYNTHETIC)` | Packs `"GOLD"` v1 binary fixtures (`golden_reference.bin`). |
-| **Tokenizer & Chat Template** | `include/inference_engine/tokenizer.hpp`, `src/tokenizer/tokenizer.cpp`, `tools/verify_tokenizer_parity.py` | Yes | Partial (Chat template only) | Yes (`tokenizer`) | Yes (Chat template) | No (SentencePiece C++ not linked yet) | `IN PROGRESS` | `format_chat_prompt()` is `TESTED`; `encode`/`decode` use synthetic `byte + 3` stub until SentencePiece C++ is linked (M1 Issue `#4`). |
-| **Sampler** | `include/inference_engine/sampler.hpp`, `src/sampler/sampler.cpp` | Yes | Partial (Greedy only) | Yes (`golden_forward`) | Yes | N/A | `IN PROGRESS` | `sample_greedy()` is `TESTED`; stochastic temperature/top-p `sample()` delegates to `sample_greedy()` until M4. |
-| **CLI Application & Benchmark Runner** | `src/app/main.cpp` | Yes | Partial (`--help`/`--info`) | Smoke-tested | N/A | No | `IN PROGRESS` | Handles `--help` and `--info`; model inference and `--benchmark` loops are `NOT STARTED` (M1/M4). |
+| **Tokenizer & Chat Template** | `include/inference_engine/tokenizer.hpp`, `src/tokenizer/tokenizer.cpp`, `tools/verify_tokenizer_parity.py` | Yes | Yes (SentencePiece C++ and exact special-token splitting) | Pending model-backed `tokenizer` CTest | Pending | No | `IMPLEMENTED` | CMake uses SentencePiece >=0.2.0 from pkg-config or a pinned upstream revision. The CI path downloads the pinned TinyLlama tokenizer model/config and runs the Hugging Face parity tool. Full build and model-backed parity have not run in this session. |
+| **Sampler** | `include/inference_engine/sampler.hpp`, `src/sampler/sampler.cpp`, `tests/test_sampler.cpp` | Yes | Yes (greedy, temperature, top-p, seeded RNG, invalid-logit filtering) | Focused MinGW test passed; CTest pending | Yes (synthetic logits) | N/A | `TESTED (SYNTHETIC)` | Standalone compilation with `-Wall -Wextra -Wpedantic` and deterministic sampling tests passed; the full CMake suite remains unrun. |
+| **CLI Application & Benchmark Runner** | `src/app/main.cpp` | Yes | Yes (FP32 prefill/decode, EOS, flags, single-run metrics) | Pending | No | No | `IMPLEMENTED` | Implements the documented position flow and benchmark measurements. `--threads > 1` warns because the current Transformer ignores thread count. Real model inference and timing remain unverified. |
