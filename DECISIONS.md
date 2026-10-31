@@ -162,3 +162,20 @@
   - Keep the library out of the public tokenizer header through a forward-declared processor type.
 - **Alternatives Considered:** A custom tokenizer, relying only on Homebrew/apt installation instructions, or an unpinned latest upstream checkout. Rejected because these reduce compatibility, reproducibility, or ease of building.
 - **Consequences:** CI and developer builds can produce the same SentencePiece API implementation without committing tokenizer assets or vendor build outputs. Hugging Face tokenizer assets remain fetched only for verification and local inference.
+
+---
+
+## ADR-012: AVX2 2-Row Register Tiling, Vectorized Scale Accumulation, Contiguous 2-Row Dispatch, and Hardware Prefetcher Reliance
+
+- **Date:** 2026-10-31
+- **Status:** Accepted (Implemented on `origin/feature/cpu-kernel-optimisation` at `b05c4e49bf135342e4f94a43a5e4c45763c802e1`)
+- **Context:**
+  1. In single-token autoregressive decode (`batch_size = 1`), matrix-vector multiplication (`matmul_q4_0_f32`) is memory-bandwidth and instruction-latency bound. Computing one row at a time via `dot_q4_0_f32` reloaded the same `FP32` input activation vector `x` from L1 cache for every single output row $M$ and executed a costly horizontal reduction (`hsum256_ps`) inside every 32-weight block (`64` times per `2048`-element row).
+  2. When `dispatch_matmul_*` dispatched single rows (`count = out_dim`) to `ThreadPool::parallel_for`, worker callbacks could only invoke single-row `dot_q4_0_f32`, bypassing multi-row register tiling.
+  3. Manual software prefetching (`_mm_prefetch` with `_MM_HINT_T0`) was evaluated on AMD Ryzen 7 7745HX (`benchmarks/results/benchmarks_prefetch.csv`) and degraded 8-thread `2048x2048` Attention Q throughput from `157.09 GFLOPS` (`0.0534 ms`) to `121.05 GFLOPS` (`0.0693 ms`, `-22.9%`) and `2048x5632` SwiGLU Down throughput from `153.89 GFLOPS` (`0.1499 ms`) to `137.64 GFLOPS` (`0.1676 ms`, `-10.6%`) due to instruction-cache bloat and interference with Zen 4 hardware stream prefetchers.
+- **Decision:**
+  1. **Vectorized Per-Block Scale Accumulation (`compute_block_unscaled_dot_vec`):** Accumulate unscaled 8-lane `FP32` dot products within each `BlockQ4_0`, multiply the 8-lane vector by `_mm256_set1_ps(d)` via `_mm256_fmadd_ps`, and execute `hsum256_ps` **once per row** instead of once per block.
+  2. **2-Row Register Tiling (`avx2::matmul_q4_0_f32`, `avx2::matmul_f32`):** Process output rows in pairs (`m` and `m + 1`), loading each 32-element activation slice (`x0..x3`) once into YMM registers and reusing it across both weight rows, with a clean scalar/1-row tail path when `out_dim` is odd.
+  3. **Contiguous 2-Row-Aligned Task Slicing (`src/kernels/dispatch.cpp`):** Slice `out_dim` into even-sized contiguous row blocks (`rows_per_task = std::max<size_t>(2, (((out_dim + target_tasks - 1) / target_tasks) + 1) & ~size_t(1))`) before invoking `pool->parallel_for`, routing each worker slice directly into `matmul_q4_0_f32` / `matmul_f32`.
+  4. **Omit Manual `_mm_prefetch`:** Rely on hardware L1/L2 stream prefetchers for linear row-major scans.
+- **Consequences:** Verified on AMD Ryzen 7 7745HX (`benchmarks/results/benchmarks_optimised.csv`): 8-thread `2048x2048` Attention Q/O latency dropped by **30.1%** (`0.0764 ms` $\rightarrow$ `0.0534 ms`, `157.09 GFLOPS`, `21.97x` over scalar), and 16-thread `2048x5632` SwiGLU Down reached `162.80 GFLOPS` (`45.79 GB/s`, `23.57x` over scalar) while maintaining `MaxAbsErr <= 4.196e-5` vs scalar reference. Porting the same 2-row register tiling and deferred horizontal reduction to ARM64 NEON (`src/kernels/neon/kernels_neon.cpp`) is scheduled as `P1` for Member I.

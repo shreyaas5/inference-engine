@@ -100,34 +100,33 @@
 
 ## 6. Mathematical Kernels (RMSNorm, RoPE, GQA, SwiGLU, MatMul)
 
-- **RMSNorm (`VERIFIED IN CODE` — `src/kernels/scalar/kernels_scalar.cpp`):**
-  - Accumulates sum of squares in `double` precision (`sum_sq`), computes `inv_rms = 1.0f / std::sqrt(static_cast<float>(sum_sq / dim) + eps)`, and outputs `(x[i] * inv_rms) * weight[i]`.
-- **RoPE (`VERIFIED IN CODE` — `src/kernels/scalar/kernels_scalar.cpp`):**
-  - Uses Hugging Face Llama **half-dim split** rotation (pairs `(i, i + head_dim / 2)` for `i = 0 .. head_dim/2 - 1`), with frequency $\theta^{-2i / d_{\text{head}}}$ and angle $\text{pos} \cdot \text{freq}$:
+- **RMSNorm (`VERIFIED` / `TESTED` — `src/kernels/scalar/kernels_scalar.cpp`):**
+  - Accumulates sum of squares in `float` (`sum_sq`), computes `inv_rms = 1.0f / std::sqrt((sum_sq / dim) + eps)`, and outputs `(x[i] * inv_rms) * weight[i]`.
+- **RoPE (`VERIFIED` / `TESTED` — `src/kernels/scalar/kernels_scalar.cpp`):**
+  - Uses Hugging Face Llama **half-dim split** rotation (`rotate_half`, pairs `(i, i + head_dim / 2)` for `i = 0 .. head_dim/2 - 1`), with frequency $\theta^{-2i / d_{\text{head}}}$ and angle $\text{pos} \cdot \text{freq}$:
     $$y_i = x_i \cos\alpha - x_{i + d/2} \sin\alpha, \qquad y_{i + d/2} = x_{i + d/2} \cos\alpha + x_i \sin\alpha$$
-  - *(Note for M1 Golden Validation: Verify during `inspect_checkpoint.py` / `generate_golden_reference.py` that Hugging Face `TinyLlama-1.1B-Chat-v1.0` uses unpermuted half-dim split `rotate_half` as implemented in `rope_inplace_f32`!)*
-- **SwiGLU (`VERIFIED IN CODE` — `src/kernels/scalar/kernels_scalar.cpp`):**
+- **SwiGLU (`VERIFIED` / `TESTED` — `src/kernels/scalar/kernels_scalar.cpp`):**
   - `out[i] = (gate[i] / (1.0f + std::exp(-gate[i]))) * up[i]`.
-- **Causal GQA (`PLANNED FOR M1`):**
+- **Causal GQA (`VERIFIED` / `TESTED` — `src/kernels/scalar/kernels_scalar.cpp`):**
   - Query head $h_q \in [0, 31]$ maps to KV head $h_{kv} = \lfloor h_q / 8 \rfloor \in [0, 3]$.
-  - Scores for $t \in [0, \text{pos}]$: $s_t = \text{dot}(q_{h_q}, k_{h_{kv}, t}) / \sqrt{64}$, followed by `softmax_f32(s, pos + 1)` and weighted accumulation of $v_{h_{kv}, t}$.
+  - Scores for $t \in [0, \text{pos}]$: $s_t = \text{dot}(q_{h_q}, k_{h_{kv}, t}) / \sqrt{64}$, followed by `softmax_inplace(s, pos + 1)` and weighted accumulation of $v_{h_{kv}, t}$.
 
 ---
 
 ## 7. SIMD Dispatch & Persistent ThreadPool
 
-- **Status:** **PARTIALLY VERIFIED IN CODE** ([`src/kernels/dispatch.cpp`](../../src/kernels/dispatch.cpp), [`src/kernels/threading/thread_pool.cpp`](../../src/kernels/threading/thread_pool.cpp)).
-- **CPU Detection:** `detect_best_backend()` returns `SimdBackend::Neon` on ARM64, `SimdBackend::Avx2` on x86-64 when runtime CPUID confirms `AVX2` + `FMA`, and `SimdBackend::Scalar` otherwise.
-- **ThreadPool:** Spawns `num_threads - 1` persistent background `std::thread` workers in the constructor; thread `0` participates in work stealing via atomic/mutex task index `next_task_` during `parallel_for()`.
-- **Current SIMD Coverage:**
-  - `dot_f32`: Vectorized in both `neon` (`vfmaq_f32`) and `avx2` (`_mm256_fmadd_ps`).
-  - `dot_q4_0_f32`: Currently delegates to `scalar::dot_q4_0_f32` in both `neon` and `avx2` (vectorized implementations scheduled for M3).
+- **Status:** **`VERIFIED` / `TESTED`** ([`src/kernels/dispatch.cpp`](../../src/kernels/dispatch.cpp), [`src/kernels/threading/thread_pool.cpp`](../../src/kernels/threading/thread_pool.cpp), [`src/kernels/avx2/kernels_avx2.cpp`](../../src/kernels/avx2/kernels_avx2.cpp), [`src/kernels/neon/kernels_neon.cpp`](../../src/kernels/neon/kernels_neon.cpp)).
+- **CPU Detection:** `detect_best_backend()` returns `SimdBackend::Neon` on ARM64, `SimdBackend::Avx2` on x86-64 when runtime CPUID + OS XSAVE (`xgetbv`) confirm `AVX2` + `FMA`, and `SimdBackend::Scalar` otherwise.
+- **ThreadPool:** Spawns `num_threads - 1` persistent background `std::thread` workers in the constructor; thread `0` participates in dynamic chunked execution (`std::max<size_t>(1, num_tasks / (num_threads * 4))`) during `parallel_for()`, with `std::exception_ptr` capture and rethrow on the calling thread (`ADR-010`).
+- **SIMD Coverage:**
+  - `dot_f32` & `matmul_f32`: Vectorized in both `neon` (`vfmaq_f32`) and `avx2` (`_mm256_fmadd_ps`, with 2-row register tiling on `origin/feature/cpu-kernel-optimisation` `b05c4e4`).
+  - `dot_q4_0_f32` & `matmul_q4_0_f32`: Vectorized with fused nibble unpack + signed-offset subtraction (`q - 8`) + FMA accumulation in both `neon` (`vld1q_u8`, `vcvt_f32_f16`, `vfmaq_f32`) and `avx2` (`_mm256_cvtepi8_epi32`, `_mm256_fmadd_ps`). On `origin/feature/cpu-kernel-optimisation` (`b05c4e4`), `avx2::dot_q4_0_f32` uses vectorized per-block scale accumulation (`compute_block_unscaled_dot_vec`) with a single end-of-row `hsum256_ps`, and `avx2::matmul_q4_0_f32` + `dispatch.cpp` use 2-row register tiling (`ADR-012`). Porting the 2-row tiling and deferred reduction to `neon` is tracked as `P1` for Member I.
 
 ---
 
 ## 8. Tokenizer, Chat Template & Autoregressive Sampling
 
-- **Chat Template (`IMPLEMENTED FROM TinyLlama tokenizer_config.json` — validation pending):**
+- **Chat Template (`REAL-CHECKPOINT VALIDATED` against `models/TinyLlama-1.1B-Chat-v1.0/tokenizer_config.json`):**
   ```text
   <|system|>
   {system_message}</s>
@@ -135,9 +134,9 @@
   {user_message}</s>
   <|assistant|>
   ```
-- **Special Token IDs:** The pinned `tokenizer_config.json` maps `<unk>`, `<s>`, and `</s>` to `0`, `1`, and `2`; `Tokenizer::load()` checks these values and the 32000-piece vocabulary.
-- **SentencePiece C++ Binding (`IMPLEMENTED; parity pending`):** CMake discovers SentencePiece >=0.2.0 through pkg-config or fetches a pinned upstream revision. `encode()`/`decode()` use its C++ processor and split the model's special tokens explicitly. The CI parity step compares against Hugging Face using the pinned tokenizer assets.
-- **Sampler (`IMPLEMENTED; focused synthetic test passed`):** Greedy argmax breaks ties toward the lowest ID; temperature/top-p sampling uses a seeded xorshift generator and filters NaN/negative-infinity logits.
-- **CLI (`IMPLEMENTED; build/real-model validation pending`):** Prefills prompt token positions, samples the first token from final prompt logits, feeds later generated tokens at the next position, and stops at EOS or the configured generation limit. `--benchmark` reports measured single-run metrics; this FP32 Transformer does not yet use `--threads`.
-- **Autoregressive Position Indexing (`VERIFIED IN CONTRACT`):**
+- **Special Token IDs:** `<unk> = 0`, `<s> = 1`, `</s> = 2` (`vocab_size = 32000`).
+- **SentencePiece C++ Binding (`REAL-CHECKPOINT VALIDATED` — `src/tokenizer/tokenizer.cpp`):** CMake discovers SentencePiece `>= 0.2.0` or builds `sentencepiece-static` via `FetchContent`. `Tokenizer` uses dual processors (`processor_` and `processor_no_prefix_` with `add_dummy_prefix = false`) and explicit special-token splitting, passing `15/15` prompts in `tools/verify_tokenizer_parity.py --self-test`.
+- **Sampler (`VERIFIED` / `TESTED` — `src/sampler/sampler.cpp`):** Greedy argmax breaks ties toward the lowest ID; temperature/top-p sampling uses a seeded 64-bit `xorshift*` generator (`0x2545F4914F6CDD1DULL`) and sanitizes `NaN`/`-Inf` logits.
+- **CLI (`SYNTHETICALLY VALIDATED` — `src/app/main.cpp`):** Supports both `FP32` and `Q4_0` `.ie` models, routes projections through `TransformerEngine`'s persistent `ThreadPool` (`--threads`), prefills prompt token positions `0 .. N-1`, samples the first generated token from `pos = N-1` logits, feeds subsequent generated tokens at `pos = N, N+1, ...`, and reports TTFT, prefill/decode tok/s, CPU utilization %, and Peak RSS MB under `--benchmark`.
+- **Autoregressive Position Indexing (`VERIFIED`):**
   - A 12-token prompt occupies `pos = 0..11`; `pos = 11` logits predict the first generated token, which is then processed at `pos = 12`.
