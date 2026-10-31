@@ -26,7 +26,7 @@ jobs:
             os: ubuntu-latest
             build_type: Release
           - name: macOS ARM64 (AppleClang / NEON)
-            os: macos-14
+            os: macos-latest
             build_type: Release
 
     steps:
@@ -53,7 +53,7 @@ jobs:
             --output build/tokenizer/tokenizer_config.json
 
       - name: Install Hugging Face tokenizer parity dependencies
-        run: python3 -m pip install transformers==4.46.3 sentencepiece==0.2.0
+        run: python3 -m pip install transformers==4.46.3 sentencepiece==0.2.0 protobuf
 
       - name: Run deterministic CTest unit suites
         run: ctest --test-dir build --output-on-failure --build-config ${{ matrix.build_type }}
