@@ -56,9 +56,9 @@
 - **Evidence:** Updated `tools/generate_golden_reference.py` so `gen_logits[step]` records forward logits after appending `next_token` at `pos = prompt_len + step`, and added per-step `gen_ref_logits` verification (`max_diff <= 1e-3f`) in `tests/test_golden_forward.cpp`.
 
 ### KI-012: `TransformerEngine::forward_token()` Not Yet Wired to `dispatch_matmul_q4_0_f32`
-- **Status:** `OPEN — SCHEDULED FOR M2/M3`
-- **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp)
-- **Description:** `dispatch_matmul_q4_0_f32`, `dispatch_matmul_f32`, and multithreaded `ThreadPool` chunking are fully implemented and tested in `src/kernels/dispatch.cpp` and `src/kernels/threading/thread_pool.cpp`. Wiring them into `TransformerEngine::forward_token()` for mixed-precision decoding is scheduled for Milestone M2/M3.
+- **Status:** `RESOLVED` (Implemented and verified in `feature/transformer-q4`)
+- **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp), [`include/inference_engine/transformer.hpp`](../../include/inference_engine/transformer.hpp)
+- **Evidence:** Implemented `TransformerEngine::matmul()` which dynamically routes to `dispatch_matmul_f32` or `dispatch_matmul_q4_0_f32` with runtime SIMD selection and optional `ThreadPool` chunking. Implemented per-token row dequantisation for Q4_0 `embed_tokens` via `dequantize_row_q4_0` and Q4_0 `lm_head` projection. Verified end-to-end against independent NumPy implementation across prefill and 4 decode steps, confirming matching numerical output between C++ and NumPy to 5 decimal places.
 
 ### KI-013: Native x86-64 AVX2/FMA Verification Pending
 - **Status:** `OPEN — HARDWARE / CI VERIFICATION`

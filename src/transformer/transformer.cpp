@@ -7,13 +7,19 @@
 #include <vector>
 
 #include "inference_engine/kernels.hpp"
+#include "inference_engine/quant.hpp"
 
 namespace inference_engine {
+
+TransformerEngine::TransformerEngine() = default;
+TransformerEngine::~TransformerEngine() = default;
+TransformerEngine::TransformerEngine(TransformerEngine&&) noexcept = default;
+TransformerEngine& TransformerEngine::operator=(TransformerEngine&&) noexcept = default;
 
 Status TransformerEngine::init(const ModelConfig& config,
                                const ModelLoader* loader,
                                SimdBackend backend,
-                               uint32_t /*num_threads*/) {
+                               uint32_t num_threads) {
     initialized_ = false;
 
     Status st = config.validate();
@@ -59,6 +65,14 @@ Status TransformerEngine::init(const ModelConfig& config,
         return kv_st;
     }
 
+    // Set up threading
+    num_threads_ = (num_threads > 0) ? num_threads : 1;
+    if (num_threads_ > 1) {
+        thread_pool_ = std::make_unique<ThreadPool>(num_threads_);
+    } else {
+        thread_pool_.reset();
+    }
+
     // Pre-allocate intermediate activations and scratch buffers
     x_.assign(config.hidden_dim, 0.0f);
     norm_buf_.assign(config.hidden_dim, 0.0f);
@@ -77,6 +91,19 @@ Status TransformerEngine::init(const ModelConfig& config,
     backend_ = backend;
     initialized_ = true;
     return Status::Ok();
+}
+
+void TransformerEngine::matmul(float* out,
+                               const TensorView& weight,
+                               const float* x,
+                               size_t out_dim,
+                               size_t in_dim) const noexcept {
+    ThreadPool* pool = thread_pool_ ? thread_pool_.get() : nullptr;
+    if (weight.dtype() == DataType::FP32) {
+        dispatch_matmul_f32(out, weight.data_f32(), x, out_dim, in_dim, backend_, pool);
+    } else if (weight.dtype() == DataType::Q4_0) {
+        dispatch_matmul_q4_0_f32(out, weight.data_q4_0(), x, out_dim, in_dim, backend_, pool);
+    }
 }
 
 Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* out_logits) {
@@ -101,10 +128,6 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
                              ") does not match kv_cache committed seq_len (" +
                              std::to_string(kv_cache_.seq_len()) + ")");
     }
-    if (config_.weight_dtype != DataType::FP32) {
-        return Status::Error(StatusCode::NotImplemented,
-                             "Q4_0 forward_token execution is not yet wired in TransformerEngine");
-    }
 
     const uint32_t hidden_dim = config_.hidden_dim;
     const uint32_t q_dim = config_.q_dim();
@@ -112,14 +135,30 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
     const uint32_t intermediate_dim = config_.intermediate_dim;
     const float eps = config_.rms_norm_eps;
 
-    const float* embed_table = bindings_.embed_tokens.data_f32();
-    if (embed_table == nullptr) {
-        return Status::Error(StatusCode::InvalidArgument, "embed_tokens is not FP32");
+    // Step 1: Token embedding lookup: copy row `token_id` (FP32) or dequantize single row (Q4_0)
+    if (bindings_.embed_tokens.dtype() == DataType::FP32) {
+        const float* embed_table = bindings_.embed_tokens.data_f32();
+        if (embed_table == nullptr) {
+            return Status::Error(StatusCode::InvalidArgument, "embed_tokens has null FP32 data");
+        }
+        const float* embed_row = embed_table + static_cast<size_t>(token_id) * hidden_dim;
+        std::memcpy(x_.data(), embed_row, static_cast<size_t>(hidden_dim) * sizeof(float));
+    } else if (bindings_.embed_tokens.dtype() == DataType::Q4_0) {
+        const BlockQ4_0* embed_blocks = bindings_.embed_tokens.data_q4_0();
+        if (embed_blocks == nullptr) {
+            return Status::Error(StatusCode::InvalidArgument, "embed_tokens has null Q4_0 data");
+        }
+        const size_t blocks_per_row = hidden_dim / kQ4_0BlockElements;
+        const BlockQ4_0* row_blocks = embed_blocks + static_cast<size_t>(token_id) * blocks_per_row;
+        Status deq_st = dequantize_row_q4_0(row_blocks, x_.data(), hidden_dim);
+        if (!deq_st.ok()) {
+            return deq_st;
+        }
+    } else {
+        return Status::Error(StatusCode::InvalidArgument,
+                             std::string("Unsupported embed_tokens dtype: ") +
+                                 dtype_name(bindings_.embed_tokens.dtype()));
     }
-
-    // Step 1: Token embedding lookup: copy row `token_id` from model.embed_tokens.weight
-    const float* embed_row = embed_table + static_cast<size_t>(token_id) * hidden_dim;
-    std::memcpy(x_.data(), embed_row, static_cast<size_t>(hidden_dim) * sizeof(float));
 
     // Step 2: Loop over all decoder layers
     for (uint32_t layer_idx = 0; layer_idx < config_.num_layers; ++layer_idx) {
@@ -129,9 +168,9 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
         scalar::rmsnorm_f32(norm_buf_.data(), x_.data(), lw.input_layernorm.data_f32(), hidden_dim, eps);
 
         // 2b. Q/K/V Projections: q = W_q u, k = W_k u, v = W_v u
-        scalar::matmul_f32(q_.data(), lw.q_proj.data_f32(), norm_buf_.data(), q_dim, hidden_dim);
-        scalar::matmul_f32(k_.data(), lw.k_proj.data_f32(), norm_buf_.data(), kv_dim, hidden_dim);
-        scalar::matmul_f32(v_.data(), lw.v_proj.data_f32(), norm_buf_.data(), kv_dim, hidden_dim);
+        matmul(q_.data(), lw.q_proj, norm_buf_.data(), q_dim, hidden_dim);
+        matmul(k_.data(), lw.k_proj, norm_buf_.data(), kv_dim, hidden_dim);
+        matmul(v_.data(), lw.v_proj, norm_buf_.data(), kv_dim, hidden_dim);
 
         // 2c. RoPE for Q and K
         scalar::rope_inplace_f32(q_.data(), config_.num_query_heads, config_.head_dim, pos, config_.rope_theta);
@@ -155,7 +194,7 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
                                   scores_.data());
 
         // 2f. Output Projection and First Residual: x <- x + W_o a
-        scalar::matmul_f32(proj_out_.data(), lw.o_proj.data_f32(), attn_out_.data(), hidden_dim, q_dim);
+        matmul(proj_out_.data(), lw.o_proj, attn_out_.data(), hidden_dim, q_dim);
         for (uint32_t i = 0; i < hidden_dim; ++i) {
             x_[i] += proj_out_[i];
         }
@@ -165,10 +204,10 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
 
         // 2h. SwiGLU Feed-Forward Network and Second Residual:
         // g = W_gate m, p = W_up m, h = SiLU(g) * p, x <- x + W_down h
-        scalar::matmul_f32(gate_.data(), lw.gate_proj.data_f32(), norm_buf_.data(), intermediate_dim, hidden_dim);
-        scalar::matmul_f32(up_.data(), lw.up_proj.data_f32(), norm_buf_.data(), intermediate_dim, hidden_dim);
+        matmul(gate_.data(), lw.gate_proj, norm_buf_.data(), intermediate_dim, hidden_dim);
+        matmul(up_.data(), lw.up_proj, norm_buf_.data(), intermediate_dim, hidden_dim);
         scalar::swiglu_f32(ffn_act_.data(), gate_.data(), up_.data(), intermediate_dim);
-        scalar::matmul_f32(proj_out_.data(), lw.down_proj.data_f32(), ffn_act_.data(), hidden_dim, intermediate_dim);
+        matmul(proj_out_.data(), lw.down_proj, ffn_act_.data(), hidden_dim, intermediate_dim);
         for (uint32_t i = 0; i < hidden_dim; ++i) {
             x_[i] += proj_out_[i];
         }
@@ -182,7 +221,7 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
 
     // Step 4: Final RMSNorm and LM-Head projection
     scalar::rmsnorm_f32(norm_buf_.data(), x_.data(), bindings_.final_norm.data_f32(), hidden_dim, eps);
-    scalar::matmul_f32(out_logits, bindings_.lm_head.data_f32(), norm_buf_.data(), config_.vocab_size, hidden_dim);
+    matmul(out_logits, bindings_.lm_head, norm_buf_.data(), config_.vocab_size, hidden_dim);
 
     return Status::Ok();
 }

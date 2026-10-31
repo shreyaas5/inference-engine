@@ -633,8 +633,20 @@ bool test_q4_0_and_mixed_precision_binding() {
         return false;
     }
     std::vector<float> dummy_logits(cfg.vocab_size, 0.0f);
-    if (q4_engine.forward_token(0, 0, dummy_logits.data()).code != StatusCode::NotImplemented) {
-        std::cerr << "Expected Q4_0 forward_token to return NotImplemented until Q4_0 layer matmuls are wired\n";
+    Status q4_fwd_st = q4_engine.forward_token(0, 0, dummy_logits.data());
+    if (!q4_fwd_st.ok()) {
+        std::cerr << "Q4_0 forward_token failed on valid Q4_0 ModelLoader: " << q4_fwd_st.message << "\n";
+        return false;
+    }
+    bool has_val = false;
+    for (float v : dummy_logits) {
+        if (std::fabs(v) > 1e-4f) {
+            has_val = true;
+            break;
+        }
+    }
+    if (!has_val) {
+        std::cerr << "Q4_0 forward_token returned all zero logits\n";
         return false;
     }
 
