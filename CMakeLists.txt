@@ -103,6 +103,9 @@ if(WIN32)
     target_link_libraries(inference-engine PRIVATE Psapi)
 endif()
 
+add_executable(inference_engine_bench benchmarks/bench_kernels.cpp)
+target_link_libraries(inference_engine_bench PRIVATE inference_engine_core)
+
 if(INFERENCE_ENGINE_BUILD_TESTS)
     enable_testing()
 
