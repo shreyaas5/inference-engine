@@ -1,6 +1,5 @@
-#include <cstdio>
-#include <cstdlib>
 #include <iostream>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -35,29 +34,11 @@ bool run_tokenizer_tests() {
         std::cerr << "Tokenizer encoded input before loading SentencePiece\n";
         return false;
     }
-    std::string model_path_str;
-    const char* env_path = std::getenv("INFERENCE_ENGINE_TOKENIZER_MODEL");
-    if (env_path != nullptr && env_path[0] != '\0') {
-        model_path_str = env_path;
-    } else {
-        const std::string candidates[] = {
-            "build/tokenizer/tokenizer.model",
-            "tokenizer/tokenizer.model"
-        };
-        for (const auto& c : candidates) {
-            FILE* f = std::fopen(c.c_str(), "rb");
-            if (f != nullptr) {
-                std::fclose(f);
-                model_path_str = c;
-                break;
-            }
-        }
-    }
-    if (model_path_str.empty()) {
+    const char* model_path = std::getenv("INFERENCE_ENGINE_TOKENIZER_MODEL");
+    if (model_path == nullptr || model_path[0] == '\0') {
         std::cerr << "INFERENCE_ENGINE_TOKENIZER_MODEL must point to TinyLlama tokenizer.model\n";
         return false;
     }
-    const char* model_path = model_path_str.c_str();
     if (!tok.load(model_path).ok() || !tok.is_loaded()) {
         std::cerr << "Tokenizer failed to load TinyLlama SentencePiece model\n";
         return false;
