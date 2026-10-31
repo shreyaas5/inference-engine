@@ -7,7 +7,6 @@
 #include "inference_engine/config.hpp"
 #include "inference_engine/kv_cache.hpp"
 #include "inference_engine/loader.hpp"
-#include "inference_engine/thread_pool.hpp"
 
 namespace inference_engine {
 
