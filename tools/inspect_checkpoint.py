@@ -367,6 +367,88 @@ def inspect_remote_hf_header(
     return 0 if mismatches == 0 else 2
 
 
+def eval_real_quant_error(
+    repo_id: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    max_elements: int = 524288,
+) -> int:
+    try:
+        from tools.convert_to_inference_engine import (  # type: ignore
+            bf16_bytes_to_fp32_bytes,
+            quantize_fp32_bytes_to_q4_0_bytes,
+            QuantErrorStats,
+        )
+    except ImportError:
+        from convert_to_inference_engine import (  # type: ignore
+            bf16_bytes_to_fp32_bytes,
+            quantize_fp32_bytes_to_q4_0_bytes,
+            QuantErrorStats,
+        )
+
+    base = f"https://huggingface.co/{repo_id}/resolve/main"
+    req = urllib.request.Request(f"{base}/model.safetensors", headers={"Range": "bytes=0-7"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        hdr_len = struct.unpack("<Q", r.read(8))[0]
+
+    req2 = urllib.request.Request(
+        f"{base}/model.safetensors", headers={"Range": f"bytes=8-{8 + hdr_len - 1}"}
+    )
+    with urllib.request.urlopen(req2, timeout=15) as r:
+        header = json.loads(r.read(hdr_len).decode("utf-8"))
+
+    representative_tensors = [
+        ("model.layers.0.self_attn.k_proj.weight", "Key Projection"),
+        ("model.layers.0.self_attn.v_proj.weight", "Value Projection"),
+        ("model.layers.0.self_attn.q_proj.weight", "Query Projection"),
+        ("model.layers.0.self_attn.o_proj.weight", "Output Projection"),
+        ("model.layers.0.mlp.gate_proj.weight", "MLP Gate Projection"),
+        ("model.layers.0.mlp.up_proj.weight", "MLP Up Projection"),
+        ("model.layers.0.mlp.down_proj.weight", "MLP Down Projection"),
+        ("model.embed_tokens.weight", "Embedding Table"),
+        ("lm_head.weight", "LM Head Projection"),
+    ]
+
+    print(f"=== Real Checkpoint Q4_0 Quantisation Error Analysis ({repo_id}) ===")
+    print(
+        f"{'Tensor Name':42s} | {'Role':18s} | {'MAE':10s} | {'RMSE':10s} | "
+        f"{'MaxAbsErr':10s} | {'RelL2 (%)':9s}"
+    )
+    print("-" * 115)
+
+    for name, role in representative_tensors:
+        meta = header.get(name)
+        if meta is None:
+            print(f"[ERROR] Tensor {name} not found in remote safetensors header")
+            return 3
+        beg, end = meta["data_offsets"]
+        abs_beg = 8 + hdr_len + beg
+        shape = meta["shape"]
+        num_elems = 1
+        for s in shape:
+            num_elems *= s
+        fetch_elems = min(num_elems, max_elements)
+        fetch_bytes = fetch_elems * 2  # BF16
+        req_t = urllib.request.Request(
+            f"{base}/model.safetensors",
+            headers={"Range": f"bytes={abs_beg}-{abs_beg + fetch_bytes - 1}"},
+        )
+        with urllib.request.urlopen(req_t, timeout=30) as r:
+            bf16_bytes = r.read()
+
+        fp32_bytes = bf16_bytes_to_fp32_bytes(bf16_bytes)
+        stats = QuantErrorStats()
+        _ = quantize_fp32_bytes_to_q4_0_bytes(fp32_bytes, error_stats=stats)
+
+        rel_l2_pct = stats.relative_l2_error * 100.0
+        print(
+            f"{name:42s} | {role:18s} | {stats.mean_abs_error:10.4e} | "
+            f"{stats.rmse:10.4e} | {stats.max_abs_error:10.4e} | {rel_l2_pct:8.2f}%"
+        )
+
+    print("-" * 115)
+    print("[OK] Real-checkpoint Q4_0 quantisation error analysis complete.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Inspect TinyLlama-1.1B-Chat-v1.0 checkpoint metadata and .ie v1 model files."
@@ -401,11 +483,19 @@ def main() -> int:
         action="store_true",
         help="Print the frozen TinyLlama-1.1B hyperparameter contract as JSON",
     )
+    parser.add_argument(
+        "--eval-real-quant-error",
+        action="store_true",
+        help="Fetch representative real TinyLlama tensor slices via HTTP Range and measure Q4_0 quantisation errors",
+    )
     args = parser.parse_args()
 
     if args.print_frozen_contract:
         print(json.dumps(FROZEN_TINYLLAMA_CONFIG, indent=2))
         return 0
+
+    if args.eval_real_quant_error:
+        return eval_real_quant_error()
 
     if args.inspect_remote_hf:
         return inspect_remote_hf_header(verbose=args.verbose)

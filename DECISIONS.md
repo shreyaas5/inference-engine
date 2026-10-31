@@ -115,3 +115,20 @@
 - **Alternatives Considered:** Incrementing `.ie` format version to `v2` (unnecessary because `.ie` v1 already stores per-tensor `TensorDesc::dtype` in the directory) or quantising 1D RMSNorm weights to `Q4_0` (rejected due to severe normalization scale distortion for `<300 KB` savings).
 - **Consequences:** Implemented and verified in `tools/convert_to_inference_engine.py`, `include/inference_engine/tensor.hpp`, `src/loader/loader.cpp`, `src/transformer/transformer.cpp`, and `tests/test_loader_validation.cpp`.
 
+---
+
+## ADR-009: Real TinyLlama Checkpoint Validation Protocol and Memory Architecture Constraints
+
+- **Date:** 2026-10-31
+- **Status:** Accepted
+- **Context:** Transitioning from synthetic validation to real `TinyLlama/TinyLlama-1.1B-Chat-v1.0` weights introduces network bandwidth constraints (~2.20 GB safetensors), storage considerations (8.29 GB for source and all target `.ie` formats), and strict zero-copy runtime contracts.
+- **Decision:**
+  1. **Two-Stage Validation Discipline:** Validate checkpoint metadata and tensor headers (23,088 bytes) and representative projection slices via HTTP Range and local file inspection without requiring a synchronous multi-gigabyte blocking download before verifying architecture and quantisation metrics.
+  2. **Dedicated CLI Error Inspection Tool:** Provide `--eval-real-quant-error` in `tools/inspect_checkpoint.py` to evaluate and log real-checkpoint `Q4_0` quantisation metrics (`MAE`, `RMSE`, `MaxAbsErr`, `RelL2`) across all 9 projection functional roles.
+  3. **Zero-Duplication Memory Architecture:**
+     - `ModelLoader::load_from_file` uses POSIX `mmap` (`PROT_READ`, `MAP_PRIVATE`) so weight pages are mapped directly into the OS page cache with zero memory duplication.
+     - `TensorView` instances are strictly non-owning views whose internal pointers are valid only during the lifetime of the backing `ModelLoader`. `ModelLoader` must strictly outlive `TransformerEngine`.
+     - `TransformerEngine` pre-allocates an activation workspace (~393 KB total) during `init()`, and performs zero dynamic heap allocations in `forward_token()`.
+- **Alternatives Considered:** Allocating owned heap buffers for all weights in C++ (rejected: doubles memory footprint and exceeds 8 GB RAM on commodity laptops) or ignoring real-weight quantisation metrics until full offline download completes (rejected: delays early discovery of numerical outliers).
+- **Consequences:** Documented and verified in `tools/inspect_checkpoint.py`, `src/loader/loader.cpp`, and `src/transformer/transformer.cpp`.
+

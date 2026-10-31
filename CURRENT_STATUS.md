@@ -1,25 +1,26 @@
 # `CURRENT_STATUS.md` — Single Source of Truth for Project Progress
 
-**Last Updated:** 2026-10-31T19:52:00+05:30  
-**Current Milestone:** `M2 — Quantisation, SIMD & Threading` (In Progress — S's `Q4_0` Converter, Mixed-Precision Loader & Binding Consolidation complete on `feature/model-format-q4`)  
+**Last Updated:** 2026-10-31T22:20:00+05:30  
+**Current Milestone:** `M2 — Quantisation, SIMD & Threading` (Real Checkpoint Validation & Architecture Review Complete on `feature/real-checkpoint-validation`)  
 **Maintainer:** S (Project Lead)
 
 ---
 
 ## 1. Git & Build State (Verified)
 
-- **Active Local Branch:** `feature/model-format-q4`
+- **Active Local Branch:** `feature/real-checkpoint-validation`
 - **Branch State Summary:**
   - `main`: `177fe49` (`Merge branch 'integration' into main`, matches `origin/main`)
   - `integration`: `783b8f4` (`Merge branch 'feature/quantisation-simd' into integration`, matches `origin/integration`)
   - `feature/model-loader`: `aa40368` (matches `origin/feature/model-loader`)
-  - `feature/model-format-q4`: `6dd4fed` + M2 docs (`Q4_0` `.ie` converter, mixed-precision `ModelLoader` & `TensorView::data_q4_0()`, unified `TransformerWeightBindings` in `TransformerEngine`)
+  - `feature/model-format-q4`: `cb176b3` (matches `origin/feature/model-format-q4`)
+  - `feature/real-checkpoint-validation`: `cb176b3` + real checkpoint validation & `--eval-real-quant-error` tool
   - `feature/transformer`: `5115467` (matches `origin/feature/transformer`)
   - `feature/quantisation-simd`: `f76ab55` (matches `origin/feature/quantisation-simd`, merged into `integration`)
   - `feature/runtime-tokenizer`: `cb85411`
-- **Working Tree State:** Clean (`build/` ignored).
+- **Working Tree State:** Clean (`build/` and `models/` ignored).
 - **CMake Build Status:** **PASSING** (`AppleClang 17.0.0.17000603`, `CMake 4.4.3`, zero compiler warnings with `-Wall -Wextra -Wpedantic`).
-- **CTest Suite Status:** **7 / 7 PASSING** on `feature/model-format-q4` (verified on Apple M4 ARM64):
+- **CTest Suite Status:** **7 / 7 PASSING** (verified on Apple M4 ARM64):
   1. `loader_validation` — **PASSED** (15 malformed-file rejection checks + 21-tensor `FP32`, `Q4_0`, and mixed-precision `--keep-embeddings-fp32` `mmap` reload, `bind_transformer_weights()`, `TensorView::data_q4_0()` + `dispatch_matmul_q4_0_f32` verification, and `TransformerEngine::init` binding).
   2. `quant_packing` — **PASSED** (18-byte `BlockQ4_0`, nibble packing, zero-block, out-of-bounds, subnormal/inf FP16, and bit-exact upstream GGML reference parity).
   3. `kernels_scalar` — **PASSED** (Includes unit tests for `rmsnorm_f32`, `rope_inplace_f32`, `softmax_f32`, `swiglu_f32`, and multi-head `gqa_attention_f32`).
@@ -29,6 +30,7 @@
   7. `golden_forward` — **PASSED** (Synthetic 2-layer `FP32` forward parity, prefill + autoregressive decode position contract, KV cache / GQA non-zero checks, and independent NumPy golden verification).
 - **Python Offline Tool Self-Tests:**
   - `python3 tools/inspect_checkpoint.py --inspect-remote-hf` — **PASSED** (`201/201` `BF16` tensors in live `TinyLlama/TinyLlama-1.1B-Chat-v1.0` header verified).
+  - `python3 tools/inspect_checkpoint.py --eval-real-quant-error` — **PASSED** (Real `TinyLlama-1.1B` tensor quantisation error evaluated across 9 functional projection roles).
   - `python3 tools/convert_to_inference_engine.py --self-test` — **PASSED** (`FP32`, `Q4_0`, and `--keep-embeddings-fp32` streaming conversion + bit-exact GGML block parity).
   - `python3 tools/generate_golden_reference.py --self-test` — **PASSED**
   - `python3 tools/verify_tokenizer_parity.py --self-test` — **PASSED**
@@ -40,7 +42,7 @@
 ### Implemented, Unit-Tested & Validated
 - **`.ie` v1 Binary Loader, Streaming `FP32`/`Q4_0` `.safetensors` Converter & Tensor Binder (`src/loader/loader.cpp`, `include/inference_engine/tensor.hpp`, `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py` — Owner: S):**
   - **Implemented & Unit-Tested:** `.ie` v1 parser/writer, 64-byte alignment & non-overlap validation, POSIX `mmap` loader, `TensorView::data_f32()` / `TensorView::data_q4_0()`, `ModelLoader::bind_transformer_weights()` supporting `FP32`, `Q4_0` (`619,113,472` bytes / `619.11 MB` for TinyLlama-1.1B), and `--keep-embeddings-fp32` (`1,069,673,472` bytes) mixed-precision models, and unified `TransformerWeightBindings` in `TransformerEngine` (`KI-010` resolved).
-  - **Reference-Validated (Checkpoint Header & Real Weight Slices):** Verified live 23,088-byte `model.safetensors` header (`201` `BF16` tensors) and measured real `TinyLlama/TinyLlama-1.1B-Chat-v1.0` `Q4_0` quantisation error on `k_proj.weight` (`MAE = 2.592e-03`, `RMSE = 4.085e-03`) and `v_proj.weight` (`MAE = 8.170e-04`, `RMSE = 9.958e-04`).
+  - **Reference-Validated (Checkpoint Header & Real Weight Slices):** Verified live 23,088-byte `model.safetensors` header (`201` `BF16` tensors) and measured real `TinyLlama/TinyLlama-1.1B-Chat-v1.0` `Q4_0` quantisation error across 9 representative projection roles via `tools/inspect_checkpoint.py --eval-real-quant-error` (`k_proj.weight`: `MAE = 2.592e-3`, `RelL2 = 12.86%`; `v_proj.weight`: `MAE = 8.170e-4`, `RelL2 = 9.04%`; `q_proj.weight`: `MAE = 9.190e-4`, `RelL2 = 11.71%`; `o_proj.weight`: `MAE = 5.387e-4`, `RelL2 = 9.18%`; `gate_proj.weight`: `MAE = 1.188e-3`, `RelL2 = 8.84%`; `up_proj.weight`: `MAE = 1.210e-3`, `RelL2 = 8.70%`; `down_proj.weight`: `MAE = 1.210e-3`, `RelL2 = 8.88%`; `embed_tokens.weight`: `MAE = 5.356e-4`, `RelL2 = 8.80%`; `lm_head.weight`: `MAE = 1.847e-3`, `RelL2 = 11.43%`). Downloaded `config.json` and SentencePiece `tokenizer.model` into `models/TinyLlama-1.1B-Chat-v1.0/`.
   - **Validated with Synthetic Weights:** Two-pass streaming `BF16 -> FP32` and `BF16 -> Q4_0` `.safetensors -> .ie` conversion and C++ `mmap` reload verified on 2-layer (`21`-tensor) synthetic checkpoints.
 - **Scalar FP32 Kernels, Causal GQA & Transformer Forward Pass (`src/kernels/scalar/kernels_scalar.cpp`, `src/core/kv_cache.cpp`, `src/transformer/transformer.cpp` — Owner: U):**
   - **Implemented & Unit-Tested:** `rmsnorm_f32`, `rope_inplace_f32`, `dot_f32`, `dot_q4_0_f32`, `matmul_f32`, `matmul_q4_0_f32`, `swiglu_f32`, `softmax_f32`, `gqa_attention_f32`, `KvCache`, and full 16-step `TransformerEngine::init` + `forward_token` with unified `TransformerWeightBindings`.

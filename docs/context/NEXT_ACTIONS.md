@@ -16,9 +16,10 @@
 ## Priority 1 — FP32 Checkpoint Inspection, Conversion & Loading (Owner: S, Issue `#1`)
 
 - [x] **1.1 Zero-Dependency & NumPy-Accelerated Python Converter Setup.**
-- [x] **1.2 Complete `tools/inspect_checkpoint.py` & Verify Real TinyLlama Tensor Inventory (`201/201` tensors verified).**
+- [x] **1.2 Complete `tools/inspect_checkpoint.py` & Verify Real TinyLlama Tensor Inventory (`201/201` tensors verified) + Evaluate Real `Q4_0` Error across 9 projection roles (`--eval-real-quant-error`).**
 - [x] **1.3 Implement Streaming `FP32` Conversion (`tools/convert_to_inference_engine.py`) & C++ Tensor Binding.**
-- [ ] **1.4 Download Real 2.20 GB `model.safetensors` Payload & Convert Full 4.40 GB `tinyllama-1.1b-fp32.ie`.**
+- [ ] **1.4 Download Full 2.20 GB `model.safetensors` Payload (`curl -C -`) & Convert Full `tinyllama-1.1b-fp32.ie` / `tinyllama-1.1b-q4_0.ie`:**
+  - Local metadata (`config.json`, `generation_config.json`, `tokenizer.json`, `tokenizer.model` 499 KB) downloaded in `models/TinyLlama-1.1B-Chat-v1.0/`. Resume download when full 22-layer golden run is scheduled.
 
 ---
 

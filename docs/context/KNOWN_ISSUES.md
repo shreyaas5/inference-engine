@@ -65,6 +65,11 @@
 - **Location:** [`src/kernels/avx2/kernels_avx2.cpp`](../../src/kernels/avx2/kernels_avx2.cpp), [`src/common/common.cpp`](../../src/common/common.cpp)
 - **Description:** The AVX2/FMA vector kernels compile cleanly and fall back gracefully on non-x86 platforms, but need execution on an x86-64 CPU (Member I's machine or GitHub Actions runner) to natively verify performance and numerical output against the hardware FMA pipeline.
 
+### KI-014: Full 2.20 GB TinyLlama Checkpoint Local Download & 22-Layer Golden Run
+- **Status:** `OPEN — REPRODUCIBLE COMMANDS & REAL-TENSOR SLICES VERIFIED`
+- **Location:** `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py`, `models/TinyLlama-1.1B-Chat-v1.0/`
+- **Description:** Real checkpoint tensor inventory (`201` `BF16` tensors, `2,200,096,768` payload bytes) and real-tensor `Q4_0` quantisation errors across 9 projection roles are verified via `tools/inspect_checkpoint.py --eval-real-quant-error`. `config.json` and `tokenizer.model` are downloaded locally. Full 2.20 GB `model.safetensors` download requires ~25 minutes on commodity connection (~1.5 MB/s); resume command `curl -C - -L -o models/TinyLlama-1.1B-Chat-v1.0/model.safetensors "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/model.safetensors"` is documented for full offline 22-layer execution once Member U wires `dispatch_matmul_q4_0_f32`.
+
 ---
 
 ## 3. Environment, Build & Workflow Issues
