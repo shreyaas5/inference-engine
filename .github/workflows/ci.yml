@@ -52,6 +52,11 @@ jobs:
             https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/fe8a4ea1ffedaf415f4da2f062534de366a451e6/tokenizer_config.json \
             --output build/tokenizer/tokenizer_config.json
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
       - name: Install Hugging Face tokenizer parity dependencies
         run: python3 -m pip install transformers==4.46.3 sentencepiece==0.2.0
 
