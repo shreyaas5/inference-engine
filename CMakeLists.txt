@@ -70,8 +70,10 @@ target_link_libraries(inference_engine_core
 )
 
 if(NOT TARGET PkgConfig::SENTENCEPIECE)
-    target_include_directories(inference_engine_core PRIVATE
+    target_include_directories(inference_engine_core SYSTEM PRIVATE
         ${sentencepiece_SOURCE_DIR}/src
+        ${sentencepiece_SOURCE_DIR}/src/builtin_pb
+        ${sentencepiece_SOURCE_DIR}/third_party/protobuf-lite
         ${sentencepiece_BINARY_DIR}/src
         ${sentencepiece_BINARY_DIR}
     )
