@@ -1,14 +1,14 @@
 #include <iostream>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
-#include "inference_engine/sampler.hpp"
 #include "inference_engine/tokenizer.hpp"
 
 namespace inference_engine::testing {
 
 bool run_tokenizer_tests() {
-    // 1. Verify TinyLlama Zephyr chat template formatting contract.
+    // TinyLlama's tokenizer_config.json template renders only system/user/assistant roles.
     const std::vector<ChatMessage> messages = {
         {"system", "You are a helpful assistant."},
         {"user", "Hello!"},
@@ -22,29 +22,46 @@ bool run_tokenizer_tests() {
         std::cerr << "TinyLlama chat template formatting mismatch\n";
         return false;
     }
-
-    // 2. Verify BOS/EOS placement and round-trip scaffolding in Tokenizer.
-    Tokenizer tok;
-    std::vector<int32_t> ids;
-    if (!tok.encode("Hi", true, true, &ids).ok()) {
-        std::cerr << "Tokenizer::encode failed\n";
+    if (!Tokenizer::format_chat_prompt({}, true).empty()) {
+        std::cerr << "Empty chat unexpectedly produced a generation prompt\n";
         return false;
     }
-    if (ids.size() < 2 || ids.front() != kBosTokenId || ids.back() != kEosTokenId) {
+
+    // Encoding must fail explicitly until a real SentencePiece model is loaded.
+    Tokenizer tok;
+    std::vector<int32_t> ids;
+    if (tok.encode("Hi", true, true, &ids).ok()) {
+        std::cerr << "Tokenizer encoded input before loading SentencePiece\n";
+        return false;
+    }
+    const char* model_path = std::getenv("INFERENCE_ENGINE_TOKENIZER_MODEL");
+    if (model_path == nullptr || model_path[0] == '\0') {
+        std::cerr << "INFERENCE_ENGINE_TOKENIZER_MODEL must point to TinyLlama tokenizer.model\n";
+        return false;
+    }
+    if (!tok.load(model_path).ok() || !tok.is_loaded()) {
+        std::cerr << "Tokenizer failed to load TinyLlama SentencePiece model\n";
+        return false;
+    }
+
+    if (!tok.encode("Hi", true, true, &ids).ok() ||
+        ids.size() < 2 || ids.front() != kBosTokenId || ids.back() != kEosTokenId) {
         std::cerr << "Tokenizer BOS/EOS token placement failed\n";
         return false;
     }
-
     std::string decoded;
-    if (!tok.decode(ids, &decoded).ok() || decoded != "Hi") {
-        std::cerr << "Tokenizer::decode round-trip failed\n";
+    if (!tok.decode(ids, &decoded).ok() || decoded != "<s>Hi</s>") {
+        std::cerr << "SentencePiece encode/decode round-trip failed\n";
         return false;
     }
 
-    // 3. Verify deterministic greedy sampler.
-    const std::vector<float> logits = {-1.0f, 3.5f, 3.5f, 2.0f};
-    if (Sampler::sample_greedy(logits.data(), logits.size()) != 1) {
-        std::cerr << "Sampler::sample_greedy failed tie-breaking or argmax contract\n";
+    if (!tok.encode("<s>hello</s>", false, false, &ids).ok() ||
+        ids.size() < 3 || ids.front() != kBosTokenId || ids.back() != kEosTokenId) {
+        std::cerr << "Tokenizer special-token mapping failed\n";
+        return false;
+    }
+    if (tok.decode({-1}, &decoded).ok()) {
+        std::cerr << "Tokenizer accepted an out-of-range token ID\n";
         return false;
     }
 

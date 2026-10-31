@@ -75,8 +75,8 @@
   - `tools/verify_tokenizer_parity.py`
   - `tests/test_tokenizer.cpp`
   - `.github/workflows/ci.yml`
-- **Already Done (M0):** TinyLlama Zephyr chat template (`Tokenizer::format_chat_prompt`), greedy argmax (`Sampler::sample_greedy`), CLI `--help`/`--info` flags, and GitHub Actions CI workflow.
-- **Immediate Next Step (M1 — Issue `#4`):** Link SentencePiece C++ in `CMakeLists.txt` and `src/tokenizer/tokenizer.cpp`, replace the M0 byte-offset fallback with real SentencePiece encoding/decoding, verify parity via `tools/verify_tokenizer_parity.py`, and wire the end-to-end generation CLI in `src/app/main.cpp`.
+- **Implemented in the current worktree:** SentencePiece C++ integration, TinyLlama special-token checks, tokenizer-config-derived chat formatting, seeded greedy/temperature/top-p sampling, the FP32 CLI prefill/decode loop, benchmark output, and a model-backed Hugging Face parity harness.
+- **Immediate Next Step (M1 — Issue `#4`):** Run CI on this feature branch; confirm the full CMake build, all 8 CTest suites, and full `tools/verify_tokenizer_parity.py` pass. Then validate with S/U's real FP32 checkpoint when available. This host has no CMake/CTest and no real model payload.
 - **Start Command:**
   ```bash
   git clone https://github.com/shreyaas5/inference-engine.git && cd inference-engine && git checkout feature/runtime-tokenizer
@@ -88,4 +88,3 @@
 
 1. **Public Header Changes (`include/inference_engine/*.hpp`):** Coordinate any signature changes with **S** before merging into `integration` so parallel feature branches do not break compilation.
 2. **Pull Request Flow:** Open PRs from `feature/*` -> `integration`. Ensure GitHub Actions CI passes on both Ubuntu x86-64 and macOS ARM64 and obtain 1 peer review before merging.
-

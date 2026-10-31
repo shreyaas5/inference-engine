@@ -28,7 +28,7 @@ A custom C++17 CPU inference engine for `TinyLlama/TinyLlama-1.1B-Chat-v1.0` (~1
 
 ## 4. Technology Stack
 
-- **Runtime:** C++17 (`std::thread`, zero external inference runtime dependencies)
+- **Runtime:** C++17 (`std::thread`; SentencePiece C++ is the only tokenizer dependency)
 - **SIMD Intrinsics:** ARM64 `arm_neon.h`, x86-64 `immintrin.h` (`AVX2` / `FMA`)
 - **Build & Test:** CMake ($\ge 3.16$) and CTest
 - **Offline Tooling:** Python 3 (`tools/` for checkpoint inspection, `.ie` conversion, tokenizer parity, and golden reference generation)
@@ -59,8 +59,18 @@ inference-engine/
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
+
+# The tokenizer CTest and Hugging Face parity check use the exact model assets.
+mkdir -p build/tokenizer
+curl -fL https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/fe8a4ea1ffedaf415f4da2f062534de366a451e6/tokenizer.model \
+  -o build/tokenizer/tokenizer.model
+curl -fL https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/fe8a4ea1ffedaf415f4da2f062534de366a451e6/tokenizer_config.json \
+  -o build/tokenizer/tokenizer_config.json
 ctest --test-dir build --output-on-failure
 ```
+
+If `sentencepiece` 0.2.0 or newer is available through `pkg-config`, CMake uses it;
+otherwise CMake builds the pinned upstream SentencePiece revision.
 
 ## 7. Model Conversion Instructions (Offline Python)
 
@@ -83,12 +93,23 @@ python3 tools/convert_to_inference_engine.py \
 
 # Run CLI inference (full end-to-end weight execution arrives in M1/M2)
 ./build/inference-engine \
-  --model models/tinyllama-1.1b-q4_0.ie \
+  --model models/tinyllama-1.1b-fp32.ie \
   --tokenizer models/tokenizer.model \
   --prompt "Explain CPU cache locality." \
+  --chat \
   --threads 4 \
-  --max-tokens 64
+  --max-tokens 64 \
+  --temp 0.7 \
+  --top-p 0.9 \
+  --seed 42
 ```
+
+The current Transformer accepts FP32 `.ie` weights. `--benchmark` reports measured
+model-load time, TTFT, prompt/decode throughput, peak resident memory, and CPU
+utilization where the OS exposes it. It does not claim thread scaling until the
+Transformer is wired to the thread pool. Use `tools/verify_tokenizer_parity.py`
+to check token IDs, decode output, special-token handling, and chat formatting
+against the Hugging Face tokenizer.
 
 ## 9. Benchmarking Methodology
 

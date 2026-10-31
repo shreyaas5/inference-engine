@@ -1,6 +1,6 @@
 # `KNOWN_ISSUES.md` — Active Bugs, Stubs, Assumptions & Risks
 
-**Last Updated:** 2026-10-31T19:25:00+05:30  
+**Last Updated:** 2026-10-31T23:05:00+05:30
 *(Policy: Never delete an entry silently. When an issue is fixed, change its status to `RESOLVED` and cite the commit/test evidence.)*
 
 ---
@@ -8,28 +8,28 @@
 ## 1. Functional Stubs & Unimplemented M1–M4 Components
 
 ### KI-001: `TransformerEngine::forward_token()` Is an M0 Scaffolding Stub
-- **Status:** `RESOLVED (FOR FP32 SCALAR BASELINE — SYNTHETICALLY & NUMPY VALIDATED; REAL CHECKPOINT PENDING)`
+- **Status:** `RESOLVED (FOR BOTH FP32 AND Q4_0 — SYNTHETICALLY & NUMPY VALIDATED; REAL CHECKPOINT PENDING)`
 - **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp)
-- **Evidence:** Implemented in commit `5115467` (`feature/transformer`) and merged into `integration` and `main`. Executes all 16 Llama decoder steps across `config_.num_layers` using pre-allocated `FP32` scratch buffers, enforces the `KvCache` commit contract, and matches an independent Python NumPy `FP32` reference (`max_diff = 6.55651e-07`). Full 22-layer execution on the real 2.20 GB `TinyLlama-1.1B-Chat-v1.0` checkpoint remains pending local weight download.
+- **Evidence:** Implemented for `FP32` in commit `5115467` (`feature/transformer`) and extended to `Q4_0` / mixed-precision + `ThreadPool` in commit `26b6b48` / `ce1026a` (`feature/transformer-q4`). Executes all 16 Llama decoder steps across `config_.num_layers` using pre-allocated `FP32` scratch buffers, enforces the `KvCache` commit contract, and matches independent Python NumPy `FP32` (`max_diff = 6.55651e-07`) and `Q4_0` (`tools/verify_transformer_q4.py`, 5 decimal places) references. Full 22-layer execution on the real 2.20 GB `TinyLlama-1.1B-Chat-v1.0` checkpoint remains pending local weight download (`KI-014`).
 
 ### KI-002: Causal Grouped Query Attention (GQA) Kernel Not Yet Implemented
 - **Status:** `RESOLVED`
 - **Location:** `scalar::gqa_attention_f32` in [`src/kernels/scalar/kernels_scalar.cpp`](../../src/kernels/scalar/kernels_scalar.cpp) and [`include/inference_engine/kernels.hpp`](../../include/inference_engine/kernels.hpp)
 - **Evidence:** Implemented in commit `5115467` and unit-tested in `tests/test_kernels_scalar.cpp` and `tests/test_golden_forward.cpp`.
 
-### KI-003: `Tokenizer::encode()` and `decode()` Use a Synthetic Byte-Offset Stub
-- **Status:** `OPEN` (Scheduled for M1 — Issue `#4`, Owner: **P**)
-- **Location:** [`src/tokenizer/tokenizer.cpp`](../../src/tokenizer/tokenizer.cpp), [`CMakeLists.txt`](../../CMakeLists.txt)
-- **Description:** SentencePiece C++ is not linked yet. `encode()` pushes `static_cast<int32_t>(c) + 3` per byte so M0 BOS/EOS unit tests can run without external files.
+### KI-003: SentencePiece Tokenizer Has Not Passed Model-Backed Build/Parity Validation
+- **Status:** `RESOLVED (MODEL-BACKED CTEST & CLI VERIFIED WITH REAL TINYLLAMA TOKENIZER.MODEL)`
+- **Location:** [`src/tokenizer/tokenizer.cpp`](../../src/tokenizer/tokenizer.cpp), [`CMakeLists.txt`](../../CMakeLists.txt), [`tests/test_tokenizer.cpp`](../../tests/test_tokenizer.cpp)
+- **Evidence:** Implemented by Member P in commit `ce769c8` (`feature/runtime-tokenizer`) and verified on the consolidated branch `integration-ps08-team-sync-2026-10-31` against the real 499,723-byte `TinyLlama-1.1B-Chat-v1.0` `tokenizer.model` and `tokenizer_config.json`. `ctest --test-dir build -R tokenizer` passes all model-backed assertions (32,000 vocabulary size, `<unk>=0`, `<s>=1`, `</s>=2`, exact special-token splitting, and round-trip encode/decode).
 
 ### KI-004: Offline Python Scripts (`convert_to_inference_engine.py`, `generate_golden_reference.py`) Are Stubs
 - **Status:** `RESOLVED (FOR FP32 & Q4_0 CONVERTER, INSPECTOR, AND GOLDEN BINARY PACKER; REAL 2.20 GB CHECKPOINT GOLDEN RUN PENDING)`
-- **Evidence:** `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py` (`--dtype fp32` in `aa40368` and `--dtype q4_0` / `--keep-embeddings-fp32` / `--report-error` in `cd98ae8` on `feature/model-format-q4`), and `tools/generate_golden_reference.py` (`5115467` / `6dd4fed`) pass `--self-test`, cross-language C++ `ModelLoader` reload tests, and live `TinyLlama-1.1B-Chat-v1.0` HTTP Range tensor verification.
+- **Evidence:** `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py` (`--dtype fp32` in `aa40368` and `--dtype q4_0` / `--keep-embeddings-fp32` / `--report-error` in `cd98ae8`), and `tools/generate_golden_reference.py` (`5115467` / `6dd4fed`) pass `--self-test`, cross-language C++ `ModelLoader` reload tests, and live `TinyLlama-1.1B-Chat-v1.0` HTTP Range tensor verification.
 
 ### KI-005: `neon::dot_q4_0_f32` and `avx2::dot_q4_0_f32` Delegate to Scalar Reference
-- **Status:** `RESOLVED` (Merged into `integration` in commit `967f072`)
+- **Status:** `RESOLVED` (Merged into `integration` in commit `967f072` and verified natively on both ARM64 and x86-64)
 - **Location:** [`src/kernels/neon/kernels_neon.cpp`](../../src/kernels/neon/kernels_neon.cpp), [`src/kernels/avx2/kernels_avx2.cpp`](../../src/kernels/avx2/kernels_avx2.cpp)
-- **Evidence:** Vectorized Q4_0 dot products and matrix multiplication implemented for both ARM64 NEON (`compute_block_unscaled_dot_neon`, `neon::dot_q4_0_f32`, `neon::matmul_q4_0_f32`) and x86-64 AVX2/FMA (`compute_block_unscaled_dot`, `avx2::dot_q4_0_f32`, `avx2::matmul_q4_0_f32`). NEON verified on Apple Silicon ARM64; AVX2 verified with compiler builds and runtime CPUID guards (native x86 run pending).
+- **Evidence:** Vectorized `Q4_0` dot products and matrix multiplication implemented and verified natively on Apple M4 ARM64 (`NEON`) and AMD Ryzen 7 7745HX x86-64 (`AVX2` + `FMA`).
 
 ---
 
@@ -51,32 +51,32 @@
 - **Evidence:** Refactored `TransformerEngine` to store `TransformerWeightBindings bindings_{}` and delegate weight validation and binding to `ModelLoader::bind_transformer_weights(&bindings_)`, supporting both `FP32` and `Q4_0` models via `TensorView` (`data_f32()` / `data_q4_0()`).
 
 ### KI-011: `generate_golden_reference.py` Decode Logit Indexing & Unchecked `gen_ref_logits` in `test_golden_forward.cpp`
-- **Status:** `PARTIALLY RESOLVED (DECODE LOGIT COMPARISON & DYNAMIC IMPORTS IMPLEMENTED IN 6dd4fed)`
+- **Status:** `RESOLVED (FOR SYNTHETIC GOLDEN FIXTURES; REAL CHECKPOINT GOLDEN RUN PENDING)`
 - **Location:** [`tools/generate_golden_reference.py`](../../tools/generate_golden_reference.py), [`tests/test_golden_forward.cpp`](../../tests/test_golden_forward.cpp)
 - **Evidence:** Updated `tools/generate_golden_reference.py` so `gen_logits[step]` records forward logits after appending `next_token` at `pos = prompt_len + step`, and added per-step `gen_ref_logits` verification (`max_diff <= 1e-3f`) in `tests/test_golden_forward.cpp`.
 
 ### KI-012: `TransformerEngine::forward_token()` Not Yet Wired to `dispatch_matmul_q4_0_f32`
-- **Status:** `RESOLVED` (Implemented and verified in `feature/transformer-q4`)
+- **Status:** `RESOLVED` (Implemented and verified in `feature/transformer-q4` `ce1026a`)
 - **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp), [`include/inference_engine/transformer.hpp`](../../include/inference_engine/transformer.hpp)
-- **Evidence:** Implemented `TransformerEngine::matmul()` which dynamically routes to `dispatch_matmul_f32` or `dispatch_matmul_q4_0_f32` with runtime SIMD selection and optional `ThreadPool` chunking. Implemented per-token row dequantisation for Q4_0 `embed_tokens` via `dequantize_row_q4_0` and Q4_0 `lm_head` projection. Verified end-to-end against independent NumPy implementation across prefill and 4 decode steps, confirming matching numerical output between C++ and NumPy to 5 decimal places.
+- **Evidence:** Implemented `TransformerEngine::matmul()` which dynamically routes to `dispatch_matmul_f32` or `dispatch_matmul_q4_0_f32` with runtime SIMD selection and optional `ThreadPool` chunking. Implemented per-token row dequantisation for `Q4_0` `embed_tokens` via `dequantize_row_q4_0` and `Q4_0` `lm_head` projection. Verified end-to-end against independent NumPy implementation (`tools/verify_transformer_q4.py`) across prefill and 4 decode steps, confirming matching numerical output between C++ and NumPy to 5 decimal places.
 
 ### KI-013: Native x86-64 AVX2/FMA Verification Pending
-- **Status:** RESOLVED (Verified natively on AMD Ryzen 7 7745HX Zen 4 x86-64 in Session 008)
-- **Location:** [src/kernels/avx2/kernels_avx2.cpp](../../src/kernels/avx2/kernels_avx2.cpp), [src/common/common.cpp](../../src/common/common.cpp), [	ests/test_kernels_simd.cpp](../../tests/test_kernels_simd.cpp)
-- **Evidence:** Natively executed on AMD Ryzen 7 7745HX (8C/16T, Windows 11, Clang 23.1.4). Verified Leaf 1/7 CPUID, OSXSAVE, and XGETBV OS YMM state enablement. Tested across all 5 key TinyLlama projection shapes (256x2048, 2048x2048, 5632x2048, 2048x5632, 32000x2048) with MaxAbsErr < 4.6e-5 and RelErr < 3.1e-7 against scalar oracle. Measured 16.79x speedup on attention projection (110.38 GFLOPS, 28.91 GB/s) and up to 20.07x speedup on SwiGLU down projection (125.51 GFLOPS, 32.88 GB/s). All 7/7 CTest suites passed.
+- **Status:** `RESOLVED` (Verified natively on AMD Ryzen 7 7745HX Zen 4 x86-64 in commit `58c604d`)
+- **Location:** [`src/kernels/avx2/kernels_avx2.cpp`](../../src/kernels/avx2/kernels_avx2.cpp), [`src/common/common.cpp`](../../src/common/common.cpp), [`tests/test_kernels_simd.cpp`](../../tests/test_kernels_simd.cpp)
+- **Evidence:** Natively executed on AMD Ryzen 7 7745HX (8C/16T, Windows 11, Clang 23.1.4). Verified Leaf 1/7 CPUID, OSXSAVE, and XGETBV OS YMM state enablement. Tested across all 5 key TinyLlama projection shapes (`256x2048`, `2048x2048`, `5632x2048`, `2048x5632`, `32000x2048`) with `MaxAbsErr < 4.6e-5` and `RelErr < 3.1e-7` against scalar oracle. Measured 16.79x speedup on attention projection (`110.38 GFLOPS`, `28.91 GB/s`) and up to 20.07x speedup on SwiGLU down projection (`125.51 GFLOPS`, `32.88 GB/s`).
 
 ### KI-014: Full 2.20 GB TinyLlama Checkpoint Local Download & 22-Layer Golden Run
 - **Status:** `OPEN — REPRODUCIBLE COMMANDS & REAL-TENSOR SLICES VERIFIED`
 - **Location:** `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py`, `models/TinyLlama-1.1B-Chat-v1.0/`
-- **Description:** Real checkpoint tensor inventory (`201` `BF16` tensors, `2,200,096,768` payload bytes) and real-tensor `Q4_0` quantisation errors across 9 projection roles are verified via `tools/inspect_checkpoint.py --eval-real-quant-error`. `config.json` and `tokenizer.model` are downloaded locally. Full 2.20 GB `model.safetensors` download requires ~25 minutes on commodity connection (~1.5 MB/s); resume command `curl -C - -L -o models/TinyLlama-1.1B-Chat-v1.0/model.safetensors "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/model.safetensors"` is documented for full offline 22-layer execution once Member U wires `dispatch_matmul_q4_0_f32`.
+- **Description:** Real checkpoint tensor inventory (`201` `BF16` tensors, `2,200,096,768` payload bytes) and real-tensor `Q4_0` quantisation errors across 9 projection roles are verified via `tools/inspect_checkpoint.py --eval-real-quant-error`. `config.json`, `tokenizer_config.json`, and `tokenizer.model` (`499,723` bytes) are downloaded locally. Full 2.20 GB `model.safetensors` download (`curl -C - -L -o models/TinyLlama-1.1B-Chat-v1.0/model.safetensors "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/model.safetensors"`) and offline conversion to `tinyllama-1.1b-fp32.ie` / `tinyllama-1.1b-q4_0.ie` remain to be executed before claiming real TinyLlama text generation.
 
 ---
 
 ## 3. Environment, Build & Workflow Issues
 
 ### KI-008: Python Dependencies & SentencePiece C++ Library Not Installed in Default Host Env
-- **Status:** `PARTIALLY RESOLVED`
-- **Description:** Python `transformers` + `sentencepiece` and C++ `sentencepiece` (`brew install sentencepiece`) are still required for real Hugging Face golden generation and Issue `#4`.
+- **Status:** `RESOLVED FOR C++ SENTENCEPIECE; PYTHON VENV OPTIONAL FOR HF PARITY`
+- **Evidence:** CMake now discovers SentencePiece `>= 0.2.0` through `pkg-config` or fetches a pinned upstream revision (`google/sentencepiece` at `17d7580d6407802f85855d2cc9190634e2c95624`) automatically during `cmake -B build`. On this macOS host, `/usr/bin/python3` provides `numpy 2.0.2`.
 
 ### KI-009: Unstaged EOF Newline Diffs in Working Tree
 - **Status:** `RESOLVED`

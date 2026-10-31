@@ -127,7 +127,7 @@
 
 ## 8. Tokenizer, Chat Template & Autoregressive Sampling
 
-- **Chat Template (`VERIFIED IN CODE` — `Tokenizer::format_chat_prompt`):**
+- **Chat Template (`IMPLEMENTED FROM TinyLlama tokenizer_config.json` — validation pending):**
   ```text
   <|system|>
   {system_message}</s>
@@ -135,9 +135,9 @@
   {user_message}</s>
   <|assistant|>
   ```
-- **Special Token IDs (`VERIFIED IN CODE`):** `kUnkTokenId = 0`, `kBosTokenId = 1`, `kEosTokenId = 2`.
-- **SentencePiece C++ Binding (`PLANNED FOR M1`):** Currently stubbed with `byte + 3` in `src/tokenizer/tokenizer.cpp`.
-- **Greedy Argmax & Position Indexing (`VERIFIED IN CODE`):**
-  - `Sampler::sample_greedy()` selects the first index achieving maximum logit value.
+- **Special Token IDs:** The pinned `tokenizer_config.json` maps `<unk>`, `<s>`, and `</s>` to `0`, `1`, and `2`; `Tokenizer::load()` checks these values and the 32000-piece vocabulary.
+- **SentencePiece C++ Binding (`IMPLEMENTED; parity pending`):** CMake discovers SentencePiece >=0.2.0 through pkg-config or fetches a pinned upstream revision. `encode()`/`decode()` use its C++ processor and split the model's special tokens explicitly. The CI parity step compares against Hugging Face using the pinned tokenizer assets.
+- **Sampler (`IMPLEMENTED; focused synthetic test passed`):** Greedy argmax breaks ties toward the lowest ID; temperature/top-p sampling uses a seeded xorshift generator and filters NaN/negative-infinity logits.
+- **CLI (`IMPLEMENTED; build/real-model validation pending`):** Prefills prompt token positions, samples the first token from final prompt logits, feeds later generated tokens at the next position, and stops at EOS or the configured generation limit. `--benchmark` reports measured single-run metrics; this FP32 Transformer does not yet use `--threads`.
+- **Autoregressive Position Indexing (`VERIFIED IN CONTRACT`):**
   - A 12-token prompt occupies `pos = 0..11`; `pos = 11` logits predict the first generated token, which is then processed at `pos = 12`.
-

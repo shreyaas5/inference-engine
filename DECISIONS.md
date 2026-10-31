@@ -92,11 +92,11 @@
 ## ADR-007: SentencePiece C++ Integration for Tokenization
 
 - **Date:** 2026-10-31
-- **Status:** Accepted (Pending M1 Implementation)
+- **Status:** Accepted (implemented in working tree; build/parity validation pending)
 - **Context:** TinyLlama uses a 32,000-token SentencePiece model (`tokenizer.model`) with byte fallback and Zephyr chat tags.
 - **Decision:** Integrate the upstream SentencePiece C++ processor in `src/tokenizer/tokenizer.cpp` for M1 rather than writing a custom BPE/Unigram parser from scratch, and verify 100% token ID parity against Hugging Face using `tools/verify_tokenizer_parity.py`.
 - **Alternatives Considered:** Custom C++ BPE tokenizer parser. Rejected because SentencePiece whitespace normalization (`▁`) and byte-fallback rules are intricate and non-core to neural matrix-math execution.
-- **Consequences:** M0 uses a byte-offset stub (`byte + 3`) for synthetic unit tests; M1 Issue `#4` tracks linking `libsentpiece`.
+- **Consequences:** `Tokenizer` uses the upstream C++ processor, validates the TinyLlama vocabulary (`32000`) and special-token IDs (`0/1/2`), and handles those special tokens separately from ordinary SentencePiece text. `tools/verify_tokenizer_parity.py` performs model-backed Hugging Face comparisons.
 
 ---
 
@@ -114,6 +114,9 @@
   3. **Single Source of Truth for Weight Bindings (`KI-010` Resolved):** Refactor `TransformerEngine` (`include/inference_engine/transformer.hpp`, `src/transformer/transformer.cpp`) to store `TransformerWeightBindings bindings_{}` populated via `ModelLoader::bind_transformer_weights(&bindings_)`, removing private `LayerWeights` and duplicate `bind_tensor()` helpers.
 - **Alternatives Considered:** Incrementing `.ie` format version to `v2` (unnecessary because `.ie` v1 already stores per-tensor `TensorDesc::dtype` in the directory) or quantising 1D RMSNorm weights to `Q4_0` (rejected due to severe normalization scale distortion for `<300 KB` savings).
 - **Consequences:** Implemented and verified in `tools/convert_to_inference_engine.py`, `include/inference_engine/tensor.hpp`, `src/loader/loader.cpp`, `src/transformer/transformer.cpp`, and `tests/test_loader_validation.cpp`.
+
+---
+
 ## ADR-009: Real TinyLlama Checkpoint Validation Protocol and Memory Architecture Constraints
 
 - **Date:** 2026-10-31
@@ -145,3 +148,17 @@
   - Work-stealing queues (unnecessary architectural complexity for predictable parallel-for loops).
   - OpenMP `#pragma omp parallel for` (rejected to maintain standard C++17 portability without compiler runtime dependencies).
 - **Consequences:** Implemented in `include/inference_engine/thread_pool.hpp` and `src/kernels/threading/thread_pool.cpp`. Validated via unit tests in `tests/test_kernels_simd.cpp` covering 1,000 rapid successive cycles and forced exception recovery.
+
+---
+
+## ADR-011: Reproducible SentencePiece Build Dependency
+
+- **Date:** 2026-10-31
+- **Status:** Accepted
+- **Context:** The tokenizer must use the upstream SentencePiece C++ implementation across supported build hosts without requiring a separately installed tokenizer library.
+- **Decision:**
+  - Prefer a system SentencePiece library only when pkg-config reports version `0.2.0` or newer.
+  - Otherwise fetch the upstream repository at commit `17d7580d6407802f85855d2cc9190634e2c95624` and build its static C++ library with optional tests/shared libraries/tcmalloc disabled.
+  - Keep the library out of the public tokenizer header through a forward-declared processor type.
+- **Alternatives Considered:** A custom tokenizer, relying only on Homebrew/apt installation instructions, or an unpinned latest upstream checkout. Rejected because these reduce compatibility, reproducibility, or ease of building.
+- **Consequences:** CI and developer builds can produce the same SentencePiece API implementation without committing tokenizer assets or vendor build outputs. Hugging Face tokenizer assets remain fetched only for verification and local inference.
