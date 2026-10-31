@@ -46,6 +46,7 @@ private:
     bool loaded_ = false;
     std::string model_path_{};
     std::shared_ptr<sentencepiece::SentencePieceProcessor> processor_{};
+    std::shared_ptr<sentencepiece::SentencePieceProcessor> processor_no_prefix_{};
 };
 
 }  // namespace inference_engine
