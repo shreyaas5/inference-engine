@@ -237,3 +237,24 @@
   - Verified all branch SHAs via `git fetch --all --prune` (`33d4bdc`, `b05c4e4`, `e64078c`, `4515579`, `ce1026a`, `58c604d`, `ce769c8`, `783b8f4`, `177fe49`).
   - Audited Ryzen 7 7745HX benchmark CSVs (`benchmarks_{baseline,optimised,prefetch}.csv`) in `b05c4e4` against `CPU_KERNEL_BENCHMARKS.md` and `bench_kernels.cpp`.
   - Reconciled all C++17 header signatures, enum values (`DataType::Q4_0 = 2`), `.ie` header byte offsets (`0x00..0x3F`), exact 22-layer `.ie` byte sizes (`4,400,213,312` B `FP32`, `619,113,792` B pure `Q4_0`, `1,069,673,792` B mixed `Q4_0`), Python tool CLI flags, and Sections A–G with ready-to-paste Antigravity continuation prompts for S, U, I, and P.
+
+
+---
+
+## Session 013 — 2026-11-01 (01:00–02:30 IST)
+- **Engineer / Agent:** Member U (Transformer Engine, Attention, RoPE, KV Cache & Parity Owner) + Antigravity
+- **Branch:** `feature/transformer-runtime`
+- **Objective:** Complete real TinyLlama-1.1B-Chat-v1.0 checkpoint download, export 22-layer `.ie` models (`Q4_0` pure and mixed), optimize RoPE with precomputed lookup tables (`KI-006`), implement multi-token prefill (`forward_prompt`), execute end-to-end real-weight C++ inference, and benchmark runtime performance.
+- **Files Changed:**
+  - `include/inference_engine/kernels.hpp` & `src/kernels/scalar/kernels_scalar.cpp` — Added `scalar::rope_inplace_cached_f32` accepting precomputed `cos_row` and `sin_row`.
+  - `include/inference_engine/transformer.hpp` & `src/transformer/transformer.cpp` — Added RoPE table precomputation `[max_seq_len, head_dim / 2]` in `TransformerEngine::init()`, multi-token prefill method `forward_prompt()`, and wired `rope_inplace_cached_f32` into the per-layer forward pass.
+  - `docs/validation/REAL_TINYLLAMA_TRANSFORMER_VALIDATION.md` — Created real checkpoint validation report with quantization metrics, full 22-layer execution trace, and runtime performance benchmarks.
+  - `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/KNOWN_ISSUES.md` — Updated status to reflect real-checkpoint inference completion and resolution of `KI-004` and `KI-006`.
+- **Verification & Execution Results:**
+  - Completed download of `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` (`2,200,119,864` bytes). Verified 201/201 tensors via `tools/inspect_checkpoint.py`.
+  - Exported pure `Q4_0` model `models/tinyllama-1.1b-q4_0.ie` (`619,113,792` B; `MAE = 1.385e-3`, `RMSE = 1.744e-3`, `Rel L2 = 0.0883`).
+  - Exported mixed `Q4_0` model `models/tinyllama-1.1b-q4_0-mixed.ie` (`1,069,673,792` B).
+  - Executed real-model E2E CLI generation (`inference-engine.exe`):
+    - Pure `Q4_0`: TTFT `1200.07 ms`, decode `20.89 tokens/sec`, peak RSS `698.71 MiB`.
+    - Mixed `Q4_0`: TTFT `1338.06 ms`, decode `19.07 tokens/sec`, peak RSS `1126.42 MiB`.
+  - All 8 CTest suites passed (`8/8`, 100%).

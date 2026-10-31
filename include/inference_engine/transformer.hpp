@@ -49,6 +49,13 @@ public:
     // Writes vocabulary logits of size `config().vocab_size` into `out_logits`.
     Status forward_token(int32_t token_id, uint32_t pos, float* out_logits);
 
+    // Multi-token prefill: processes prompt tokens from pos = kv_cache.seq_len()
+    // across all prompt tokens, committing tokens into the KV cache sequentially.
+    // If out_final_logits is non-null, writes the logits for the final prompt position.
+    Status forward_prompt(const int32_t* prompt_tokens,
+                          size_t prompt_len,
+                          float* out_final_logits = nullptr);
+
 private:
     void matmul(float* out,
                 const TensorView& weight,
@@ -77,6 +84,8 @@ private:
     std::vector<float> up_{};
     std::vector<float> ffn_act_{};
     std::vector<float> scores_{};
+    std::vector<float> rope_cos_{};
+    std::vector<float> rope_sin_{};
 };
 
 }  // namespace inference_engine
