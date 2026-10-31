@@ -1,6 +1,5 @@
 #include "inference_engine/transformer.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>
