@@ -112,8 +112,8 @@ def generate_golden(
 ) -> int:
     try:
         import importlib
-        torch = importlib.import_module("torch")
-        transformers = importlib.import_module("transformers")
+        torch = importlib.import_module("torch")  # type: ignore
+        transformers = importlib.import_module("transformers")  # type: ignore
         AutoModelForCausalLM = getattr(transformers, "AutoModelForCausalLM")
         AutoTokenizer = getattr(transformers, "AutoTokenizer")
     except (ImportError, ModuleNotFoundError):
