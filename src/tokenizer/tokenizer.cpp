@@ -168,7 +168,9 @@ Status Tokenizer::decode(const std::vector<int32_t>& token_ids, std::string* out
         return Status::Ok();
     };
 
-    for (int32_t id : token_ids) {
+    bool prev_is_special = false;
+    for (size_t i = 0; i < token_ids.size(); ++i) {
+        int32_t id = token_ids[i];
         if (id < 0 || id >= processor_->GetPieceSize()) {
             out_text->clear();
             return Status::Error(StatusCode::OutOfBounds,
@@ -182,7 +184,18 @@ Status Tokenizer::decode(const std::vector<int32_t>& token_ids, std::string* out
             }
         }
         if (special == nullptr) {
+            // Match Hugging Face LlamaTokenizer (legacy=False) decode behavior:
+            // if following a special token at index 1 and the piece does not start with
+            // the SentencePiece dummy prefix space ('\xe2\x96\x81'), a space is inserted.
+            if (prev_is_special && i == 1) {
+                const std::string piece = processor_->IdToPiece(id);
+                constexpr const char* kDummyPrefix = "\xe2\x96\x81";
+                if (piece.rfind(kDummyPrefix, 0) != 0) {
+                    out_text->push_back(' ');
+                }
+            }
             segment.push_back(id);
+            prev_is_special = false;
             continue;
         }
 
@@ -192,6 +205,7 @@ Status Tokenizer::decode(const std::vector<int32_t>& token_ids, std::string* out
             return status;
         }
         out_text->append(special->text);
+        prev_is_special = true;
     }
     const Status status = decode_segment();
     if (!status.ok()) {
