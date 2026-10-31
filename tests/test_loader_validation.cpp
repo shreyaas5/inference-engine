@@ -228,6 +228,47 @@ bool test_malformed_file_rejection() {
         }
     }
 
+    // 13. Unsupported header weight_dtype (e.g. FP16=1 or unknown=99) & directory dtype.
+    {
+        std::vector<uint8_t> img = valid_image;
+        write_u32_le_at(img.data() + 12, static_cast<uint32_t>(DataType::FP16));
+        if (bad_loader.load_from_buffer(img.data(), img.size()).code !=
+            StatusCode::UnsupportedFormat) {
+            std::cerr << "Expected FP16 header weight_dtype to return UnsupportedFormat\n";
+            return false;
+        }
+        write_u32_le_at(img.data() + 12, 99u);
+        if (bad_loader.load_from_buffer(img.data(), img.size()).code !=
+            StatusCode::CorruptedFile) {
+            std::cerr << "Expected unknown header weight_dtype=99 to return CorruptedFile\n";
+            return false;
+        }
+    }
+
+    // 14. Duplicate tensor name in directory.
+    {
+        TensorDesc dup1 = t0;
+        if (ModelLoader::build_ie_image(cfg, {t0, dup1}, {p0, p0}, &valid_image).ok()) {
+            std::cerr << "Expected build_ie_image to reject duplicate tensor names\n";
+            return false;
+        }
+    }
+
+    // 15. Wrong payload_nbytes for Q4_0 tensor in directory.
+    {
+        std::vector<uint8_t> img;
+        if (!ModelLoader::build_ie_image(cfg, {t0, t1}, {p0, p1}, &img).ok()) {
+            return false;
+        }
+        const size_t entry0_len = 4 + t0.name.size() + 56;
+        const size_t t1_nbytes_field = 64 + entry0_len + 4 + t1.name.size() + 8 + 32 + 8;
+        write_u64_le_at(img.data() + t1_nbytes_field, p1.size() + 18);
+        if (bad_loader.load_from_buffer(img.data(), img.size()).ok()) {
+            std::cerr << "Expected corrupted Q4_0 payload_nbytes to fail validation\n";
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -384,6 +425,205 @@ bool test_tensor_binding_and_numerical_preservation() {
     return true;
 }
 
+bool test_q4_0_and_mixed_precision_binding() {
+    ModelConfig cfg{};
+    cfg.num_layers = 2;
+    cfg.hidden_dim = 64;
+    cfg.intermediate_dim = 128;
+    cfg.num_query_heads = 4;
+    cfg.num_kv_heads = 2;
+    cfg.head_dim = 16;
+    cfg.vocab_size = 128;
+    cfg.max_seq_len = 32;
+    cfg.weight_dtype = DataType::Q4_0;
+
+    auto build_q4_model = [&](bool keep_embeddings_fp32,
+                              std::vector<TensorDesc>* out_descs,
+                              std::vector<std::vector<uint8_t>>* out_payloads) {
+        out_descs->clear();
+        out_payloads->clear();
+
+        auto add_f32 = [&](const std::string& name,
+                           uint32_t ndim,
+                           std::array<uint64_t, kMaxTensorDims> shape,
+                           float base,
+                           float step) {
+            TensorDesc d{};
+            d.name = name;
+            d.dtype = DataType::FP32;
+            d.ndim = ndim;
+            d.shape = shape;
+            uint64_t elems = 0;
+            d.compute_num_elements(&elems);
+            out_descs->push_back(d);
+            out_payloads->push_back(pack_f32_Pattern(static_cast<size_t>(elems), base, step));
+        };
+
+        auto add_q4 = [&](const std::string& name,
+                          std::array<uint64_t, kMaxTensorDims> shape,
+                          float base,
+                          float step) {
+            TensorDesc d{};
+            d.name = name;
+            d.dtype = DataType::Q4_0;
+            d.ndim = 2;
+            d.shape = shape;
+            uint64_t elems = 0;
+            d.compute_num_elements(&elems);
+            std::vector<float> src_f32(static_cast<size_t>(elems));
+            for (size_t i = 0; i < src_f32.size(); ++i) {
+                src_f32[i] = base + static_cast<float>(static_cast<int>(i % 31) - 15) * step;
+            }
+            std::vector<uint8_t> q4_bytes((src_f32.size() / kQ4_0BlockElements) * kQ4_0BlockBytes);
+            quantize_row_q4_0(src_f32.data(),
+                              reinterpret_cast<BlockQ4_0*>(q4_bytes.data()),
+                              src_f32.size());
+            out_descs->push_back(d);
+            out_payloads->push_back(std::move(q4_bytes));
+        };
+
+        if (keep_embeddings_fp32) {
+            add_f32("model.embed_tokens.weight", 2, {cfg.vocab_size, cfg.hidden_dim, 0, 0}, 0.1f, 0.01f);
+        } else {
+            add_q4("model.embed_tokens.weight", {cfg.vocab_size, cfg.hidden_dim, 0, 0}, 0.1f, 0.05f);
+        }
+
+        for (uint32_t l = 0; l < cfg.num_layers; ++l) {
+            const std::string p = "model.layers." + std::to_string(l) + ".";
+            const float lb = static_cast<float>(l + 1) * 0.25f;
+            add_f32(p + "input_layernorm.weight", 1, {cfg.hidden_dim, 0, 0, 0}, 1.0f + lb, 0.01f);
+            add_q4(p + "self_attn.q_proj.weight", {cfg.q_dim(), cfg.hidden_dim, 0, 0}, lb, 0.04f);
+            add_q4(p + "self_attn.k_proj.weight", {cfg.kv_dim(), cfg.hidden_dim, 0, 0}, lb, 0.05f);
+            add_q4(p + "self_attn.v_proj.weight", {cfg.kv_dim(), cfg.hidden_dim, 0, 0}, lb, 0.06f);
+            add_q4(p + "self_attn.o_proj.weight", {cfg.hidden_dim, cfg.q_dim(), 0, 0}, lb, 0.07f);
+            add_f32(p + "post_attention_layernorm.weight", 1, {cfg.hidden_dim, 0, 0, 0}, 1.2f + lb, 0.01f);
+            add_q4(p + "mlp.gate_proj.weight", {cfg.intermediate_dim, cfg.hidden_dim, 0, 0}, lb, 0.03f);
+            add_q4(p + "mlp.up_proj.weight", {cfg.intermediate_dim, cfg.hidden_dim, 0, 0}, lb, 0.04f);
+            add_q4(p + "mlp.down_proj.weight", {cfg.hidden_dim, cfg.intermediate_dim, 0, 0}, lb, 0.05f);
+        }
+
+        add_f32("model.norm.weight", 1, {cfg.hidden_dim, 0, 0, 0}, 1.0f, 0.005f);
+        if (keep_embeddings_fp32) {
+            add_f32("lm_head.weight", 2, {cfg.vocab_size, cfg.hidden_dim, 0, 0}, -0.2f, 0.01f);
+        } else {
+            add_q4("lm_head.weight", {cfg.vocab_size, cfg.hidden_dim, 0, 0}, -0.2f, 0.05f);
+        }
+    };
+
+    // 1. Default Q4_0 mixed-precision model (all 2D weights Q4_0, all 1D norms FP32).
+    std::vector<TensorDesc> descs;
+    std::vector<std::vector<uint8_t>> payloads;
+    build_q4_model(false, &descs, &payloads);
+
+    std::vector<uint8_t> q4_img;
+    if (!ModelLoader::build_ie_image(cfg, descs, payloads, &q4_img).ok()) {
+        std::cerr << "Failed to build Q4_0 .ie image\n";
+        return false;
+    }
+
+    const std::string temp_q4_path = "test_temp_synthetic_q4_0.ie";
+    {
+        std::ofstream ofs(temp_q4_path, std::ios::binary | std::ios::trunc);
+        ofs.write(reinterpret_cast<const char*>(q4_img.data()),
+                  static_cast<std::streamsize>(q4_img.size()));
+    }
+
+    ModelLoader q4_loader;
+    Status load_st = q4_loader.load_from_file(temp_q4_path);
+    std::remove(temp_q4_path.c_str());
+    if (!load_st.ok()) {
+        std::cerr << "Failed to load Q4_0 .ie file: " << load_st.message << "\n";
+        return false;
+    }
+
+    TransformerWeightBindings bindings{};
+    if (!q4_loader.bind_transformer_weights(&bindings).ok()) {
+        std::cerr << "bind_transformer_weights failed on Q4_0 .ie model\n";
+        return false;
+    }
+
+    // Verify TensorView accessors for Q4_0 and FP32 tensors.
+    if (bindings.embed_tokens.dtype() != DataType::Q4_0 ||
+        bindings.embed_tokens.data_q4_0() == nullptr ||
+        bindings.embed_tokens.data_f32() != nullptr ||
+        bindings.embed_tokens.num_elements() != cfg.vocab_size * cfg.hidden_dim ||
+        bindings.embed_tokens.num_blocks() != (cfg.vocab_size * cfg.hidden_dim) / 32 ||
+        bindings.embed_tokens.payload_nbytes() != ((cfg.vocab_size * cfg.hidden_dim) / 32) * 18) {
+        std::cerr << "Q4_0 embed_tokens TensorView metadata or pointers invalid\n";
+        return false;
+    }
+    if (bindings.final_norm.dtype() != DataType::FP32 ||
+        bindings.final_norm.data_f32() == nullptr ||
+        bindings.final_norm.data_q4_0() != nullptr) {
+        std::cerr << "FP32 final_norm TensorView metadata or pointers invalid\n";
+        return false;
+    }
+
+    // Dequantize bound q_proj of layer 0 and verify bounded reconstruction error.
+    const TensorView& q0_view = bindings.layers[0].q_proj;
+    std::vector<float> deq_q0(static_cast<size_t>(q0_view.num_elements()), 0.0f);
+    if (!dequantize_row_q4_0(q0_view.data_q4_0(), deq_q0.data(), deq_q0.size()).ok()) {
+        std::cerr << "dequantize_row_q4_0 failed on bound layer 0 q_proj\n";
+        return false;
+    }
+    for (size_t i = 0; i < deq_q0.size(); ++i) {
+        const float expected = 0.25f + static_cast<float>(static_cast<int>(i % 31) - 15) * 0.04f;
+        if (std::fabs(deq_q0[i] - expected) > 0.15f) {
+            std::cerr << "Bound Q4_0 q_proj dequantization error exceeded bound at index " << i << "\n";
+            return false;
+        }
+    }
+
+    // 2. Mixed-precision Q4_0 model with FP32 embeddings and lm_head.
+    std::vector<TensorDesc> mp_descs;
+    std::vector<std::vector<uint8_t>> mp_payloads;
+    build_q4_model(true, &mp_descs, &mp_payloads);
+    std::vector<uint8_t> mp_img;
+    if (!ModelLoader::build_ie_image(cfg, mp_descs, mp_payloads, &mp_img).ok()) {
+        return false;
+    }
+    ModelLoader mp_loader;
+    if (!mp_loader.load_from_buffer(mp_img.data(), mp_img.size()).ok()) {
+        return false;
+    }
+    TransformerWeightBindings mp_bindings{};
+    if (!mp_loader.bind_transformer_weights(&mp_bindings).ok()) {
+        std::cerr << "bind_transformer_weights failed on mixed-precision (FP32 embeddings + Q4_0 layers) model\n";
+        return false;
+    }
+    if (mp_bindings.embed_tokens.dtype() != DataType::FP32 ||
+        mp_bindings.lm_head.dtype() != DataType::FP32 ||
+        mp_bindings.layers[0].q_proj.dtype() != DataType::Q4_0) {
+        std::cerr << "Mixed-precision TensorView dtypes did not match expected policy\n";
+        return false;
+    }
+
+    // 3. Negative test: 1D norm mistakenly quantised to Q4_0 must be rejected by bind_transformer_weights.
+    std::vector<TensorDesc> bad_norm_descs = descs;
+    std::vector<std::vector<uint8_t>> bad_norm_payloads = payloads;
+    for (size_t i = 0; i < bad_norm_descs.size(); ++i) {
+        if (bad_norm_descs[i].name == "model.norm.weight") {
+            bad_norm_descs[i].dtype = DataType::Q4_0;
+            bad_norm_payloads[i].assign((cfg.hidden_dim / 32) * 18, 0);
+        }
+    }
+    std::vector<uint8_t> bad_norm_img;
+    if (!ModelLoader::build_ie_image(cfg, bad_norm_descs, bad_norm_payloads, &bad_norm_img).ok()) {
+        return false;
+    }
+    ModelLoader bad_norm_loader;
+    if (!bad_norm_loader.load_from_buffer(bad_norm_img.data(), bad_norm_img.size()).ok()) {
+        return false;
+    }
+    TransformerWeightBindings unused{};
+    if (bad_norm_loader.bind_transformer_weights(&unused).ok()) {
+        std::cerr << "Expected bind_transformer_weights to reject Q4_0 1D norm tensor\n";
+        return false;
+    }
+
+    return true;
+}
+
 }  // namespace
 
 bool run_loader_validation_tests() {
@@ -391,6 +631,9 @@ bool run_loader_validation_tests() {
         return false;
     }
     if (!test_tensor_binding_and_numerical_preservation()) {
+        return false;
+    }
+    if (!test_q4_0_and_mixed_precision_binding()) {
         return false;
     }
 

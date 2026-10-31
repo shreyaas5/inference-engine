@@ -158,9 +158,14 @@ Status ModelLoader::load_from_buffer(const uint8_t* data, size_t size) {
     if (!is_valid_dtype(raw_weight_dtype)) {
         return Status::Error(StatusCode::CorruptedFile, "Invalid model weight dtype in header");
     }
+    const DataType header_weight_dtype = static_cast<DataType>(raw_weight_dtype);
+    if (header_weight_dtype != DataType::FP32 && header_weight_dtype != DataType::Q4_0) {
+        return Status::Error(StatusCode::UnsupportedFormat,
+                             "Unsupported model weight_dtype in .ie header; expected FP32 or Q4_0");
+    }
 
     ModelConfig cfg{};
-    cfg.weight_dtype = static_cast<DataType>(raw_weight_dtype);
+    cfg.weight_dtype = header_weight_dtype;
     cfg.num_layers = read_u32_le(data + 16);
     cfg.hidden_dim = read_u32_le(data + 20);
     cfg.intermediate_dim = read_u32_le(data + 24);
@@ -225,6 +230,10 @@ Status ModelLoader::load_from_buffer(const uint8_t* data, size_t size) {
             return Status::Error(StatusCode::CorruptedFile, "Invalid tensor dtype in directory");
         }
         desc.dtype = static_cast<DataType>(raw_dtype);
+        if (desc.dtype != DataType::FP32 && desc.dtype != DataType::Q4_0) {
+            return Status::Error(StatusCode::UnsupportedFormat,
+                                 "Unsupported tensor dtype in directory for " + desc.name);
+        }
         desc.ndim = read_u32_le(data + cursor + 4);
         cursor += 8;
 
@@ -366,11 +375,24 @@ Status ModelLoader::bind_transformer_weights(TransformerWeightBindings* out_bind
     TransformerWeightBindings bound{};
     bound.layers.resize(config_.num_layers);
 
-    Status st = validate_tensor_binding("model.embed_tokens.weight",
-                                        2,
-                                        {vocab, hidden, 0, 0},
-                                        w_dtype,
-                                        &bound.embed_tokens);
+    // For Q4_0 models, embed_tokens and lm_head are Q4_0 by default, or FP32 if exported
+    // with --keep-embeddings-fp32. For FP32 models, all tensors must be FP32.
+    auto validate_embedding_or_head = [&](const std::string& name,
+                                          const std::array<uint64_t, kMaxTensorDims>& shape,
+                                          TensorView* out_view) -> Status {
+        const TensorView* view = find_tensor(name);
+        if (view == nullptr) {
+            return Status::Error(StatusCode::CorruptedFile, "Missing required tensor: " + name);
+        }
+        DataType expected_dt = w_dtype;
+        if (w_dtype == DataType::Q4_0 && view->dtype() == DataType::FP32) {
+            expected_dt = DataType::FP32;
+        }
+        return validate_tensor_binding(name, 2, shape, expected_dt, out_view);
+    };
+
+    Status st = validate_embedding_or_head(
+        "model.embed_tokens.weight", {vocab, hidden, 0, 0}, &bound.embed_tokens);
     if (!st.ok()) {
         return st;
     }
@@ -453,11 +475,7 @@ Status ModelLoader::bind_transformer_weights(TransformerWeightBindings* out_bind
         return st;
     }
 
-    st = validate_tensor_binding("lm_head.weight",
-                                 2,
-                                 {vocab, hidden, 0, 0},
-                                 w_dtype,
-                                 &bound.lm_head);
+    st = validate_embedding_or_head("lm_head.weight", {vocab, hidden, 0, 0}, &bound.lm_head);
     if (!st.ok()) {
         return st;
     }
