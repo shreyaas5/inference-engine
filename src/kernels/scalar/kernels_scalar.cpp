@@ -1,4 +1,5 @@
 #include "inference_engine/kernels.hpp"
+#include "inference_engine/kv_cache.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -118,6 +119,59 @@ void softmax_f32(float* x, size_t len) noexcept {
     const float inv_sum = (sum > 0.0) ? static_cast<float>(1.0 / sum) : 0.0f;
     for (size_t i = 0; i < len; ++i) {
         x[i] *= inv_sum;
+    }
+}
+
+void gqa_attention_f32(float* out,
+                       const float* q,
+                       const KvCache& kv_cache,
+                       uint32_t layer_idx,
+                       uint32_t pos,
+                       uint32_t num_query_heads,
+                       uint32_t num_kv_heads,
+                       uint32_t head_dim,
+                       float* scores_scratch) noexcept {
+    if (out == nullptr || q == nullptr || scores_scratch == nullptr ||
+        num_query_heads == 0 || num_kv_heads == 0 || head_dim == 0) {
+        return;
+    }
+    const uint32_t gqa_group_size = num_query_heads / num_kv_heads;
+    const float head_scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+    const uint32_t seq_count = pos + 1;
+
+    for (uint32_t hq = 0; hq < num_query_heads; ++hq) {
+        const uint32_t hkv = (gqa_group_size > 0) ? (hq / gqa_group_size) : 0;
+        const float* q_head = q + static_cast<size_t>(hq) * head_dim;
+
+        // 1. Compute dot-product attention scores across all cached positions 0..pos
+        for (uint32_t t = 0; t < seq_count; ++t) {
+            const float* k_vec = kv_cache.key_vector(layer_idx, t);
+            if (k_vec == nullptr) {
+                scores_scratch[t] = 0.0f;
+                continue;
+            }
+            const float* k_head = k_vec + static_cast<size_t>(hkv) * head_dim;
+            scores_scratch[t] = dot_f32(q_head, k_head, head_dim) * head_scale;
+        }
+
+        // 2. Numerically stable softmax over scores_scratch[0..pos]
+        softmax_f32(scores_scratch, seq_count);
+
+        // 3. Accumulate weighted values
+        float* out_head = out + static_cast<size_t>(hq) * head_dim;
+        std::fill(out_head, out_head + head_dim, 0.0f);
+
+        for (uint32_t t = 0; t < seq_count; ++t) {
+            const float* v_vec = kv_cache.value_vector(layer_idx, t);
+            if (v_vec == nullptr) {
+                continue;
+            }
+            const float* v_head = v_vec + static_cast<size_t>(hkv) * head_dim;
+            const float weight = scores_scratch[t];
+            for (uint32_t d = 0; d < head_dim; ++d) {
+                out_head[d] += weight * v_head[d];
+            }
+        }
     }
 }
 
