@@ -233,6 +233,10 @@ def inspect_ie_file(ie_path: Path, verbose: bool = False) -> int:
         )
 
         dir_entry_struct = struct.Struct("<2I4Q2Q")
+        dtype_counts: Dict[str, int] = {}
+        dtype_bytes: Dict[str, int] = {}
+        payload_ranges: List[Tuple[int, int]] = []
+
         for idx in range(tensor_count):
             name_len = struct.unpack("<I", f.read(4))[0]
             name = f.read(name_len).decode("utf-8")
@@ -243,11 +247,58 @@ def inspect_ie_file(ie_path: Path, verbose: bool = False) -> int:
             if offset % 64 != 0:
                 print(f"[ERROR] Tensor {name} payload_offset {offset} is not 64-byte aligned")
                 return 3
+
+            num_elems = 1
+            for d in shape:
+                num_elems *= d
+            if dtype_raw == 0:  # FP32
+                expected_nbytes = num_elems * 4
+            elif dtype_raw == 2:  # Q4_0
+                if len(shape) == 0 or shape[-1] % 32 != 0 or num_elems % 32 != 0:
+                    print(f"[ERROR] Q4_0 tensor {name} shape {shape} is not divisible by 32")
+                    return 3
+                expected_nbytes = (num_elems // 32) * 18
+            elif dtype_raw == 1:  # FP16
+                expected_nbytes = num_elems * 2
+            elif dtype_raw == 3:  # I32
+                expected_nbytes = num_elems * 4
+            else:
+                print(f"[ERROR] Unknown tensor dtype {dtype_raw} for {name}")
+                return 3
+
+            if nbytes != expected_nbytes or offset + nbytes > file_size:
+                print(
+                    f"[ERROR] Invalid payload byte size for {name}: actual={nbytes}, expected={expected_nbytes}"
+                )
+                return 3
+
+            dt_name = IE_DTYPE_NAMES.get(dtype_raw, str(dtype_raw))
+            dtype_counts[dt_name] = dtype_counts.get(dt_name, 0) + 1
+            dtype_bytes[dt_name] = dtype_bytes.get(dt_name, 0) + nbytes
+            payload_ranges.append((offset, offset + nbytes))
+
             if verbose:
                 print(
-                    f"  [{idx:3d}] {name:48s} dtype={IE_DTYPE_NAMES.get(dtype_raw, dtype_raw):4s} "
+                    f"  [{idx:3d}] {name:48s} dtype={dt_name:4s} "
                     f"shape={shape} offset={offset} nbytes={nbytes}"
                 )
+
+        payload_ranges.sort(key=lambda r: r[0])
+        for i in range(1, len(payload_ranges)):
+            if payload_ranges[i][0] < payload_ranges[i - 1][1]:
+                print("[ERROR] Overlapping tensor payload ranges in .ie file")
+                return 3
+        if payload_ranges and payload_ranges[-1][1] != total_file_bytes:
+            print(
+                f"[ERROR] Final tensor payload end {payload_ranges[-1][1]} != total_file_bytes {total_file_bytes}"
+            )
+            return 3
+
+        summary_parts = [
+            f"{dt}: {dtype_counts[dt]} tensors ({dtype_bytes[dt]:,} B)"
+            for dt in sorted(dtype_counts.keys())
+        ]
+        print(f"  dtype breakdown: {', '.join(summary_parts)}")
 
     print(f"[OK] Verified .ie v1 structure and 64-byte alignment across {tensor_count} tensors.")
     return 0
