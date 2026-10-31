@@ -1,71 +1,55 @@
-# `CURRENT_STATUS.md` — Single Source of Truth for Project Progress
+# `CURRENT_STATUS.md` — Single Source of Truth for Project Status
 
-**Last Updated:** 2026-11-01T00:25:00+05:30  
-**Current Milestone:** `M3/M4 — Phase 2B: Benchmark Verification, NEON Optimisation & Cross-Platform Validation`  
-**Maintainer:** I (Quantisation & CPU Optimisation Specialist) / S (Project Lead)  
-
----
-
-## 1. Git & Build State (Verified)
-
-- **Active Local Branch:** `feature/cpu-kernel-optimisation` (tracking `origin/feature/cpu-kernel-optimisation`)
-- **Remote Repository:** `https://github.com/shreyaas5/inference-engine`
-- **Compiler / Toolchain:** Clang 23.1.4 (LLVM-MinGW UCRT x86_64), CMake 3.31.5, Ninja
-- **Hardware Verified:** AMD Ryzen 7 7745HX (Zen 4, 8 physical cores, 16 SMT threads, 16 GB DDR5-5200 RAM, Windows 11)
-- **ARM64 Toolchain Verified:** `clang++ --target=aarch64-w64-mingw32` (syntax & type checking with 0 warnings)
-- **CMake Build Status:** **PASSING (Zero Warnings)** with `-Wall -Wextra -Wpedantic` on:
-  - `inference_engine_core` (static library)
-  - `inference-engine` (CLI executable)
-  - `inference_engine_tests` (CTest runner, 8 suites)
-  - `inference_engine_bench` (dedicated benchmarking executable)
-- **CTest Suite Status:** **8 / 8 PASSING (100%)** in 2.08s on AMD Ryzen 7 7745HX:
-  1. `loader_validation` — **PASSED** (15 malformed-file rejection checks + 21-tensor `FP32`, `Q4_0`, and mixed-precision `mmap` reload, `bind_transformer_weights()`, and `TensorView::data_q4_0()`).
-  2. `quant_packing` — **PASSED** (18-byte `BlockQ4_0`, nibble packing, zero-block, out-of-bounds, subnormal/inf FP16, and bit-exact upstream GGML reference parity).
-  3. `kernels_scalar` — **PASSED** (Unit tests for `rmsnorm_f32`, `rope_inplace_f32`, `softmax_f32`, `swiglu_f32`, and multi-head `gqa_attention_f32`).
-  4. `kernels_simd` — **PASSED** (Native AVX2/FMA CPUID detection, multi-length & distribution Q4_0 dot tests, TinyLlama projection numerical error tests, 2-row tiled odd row / boundary tail tests for AVX2 and NEON, 1,000-cycle `ThreadPool` stress test, exception propagation, and mixed-precision SwiGLU MLP flow).
-  5. `kv_cache` — **PASSED** (Strict separation of `append()` and `commit_token()`).
-  6. `tokenizer` — **PASSED** (SentencePiece `tokenizer.model` 32,000-piece vocabulary load, BOS/EOS/UNK verification, special token splitting, and round-trip encode/decode).
-  7. `sampler` — **PASSED** (Deterministic greedy argmax, temperature scaling, top-p nucleus truncation, and NaN/Inf logit filtering).
-  8. `golden_forward` — **PASSED** (Synthetic 2-layer `FP32`, `Q4_0`, and mixed-precision forward parity across prefill and decode steps).
+> **Last Updated:** 2026-11-01
+> **Current Active Branch:** `feature/cpu-kernel-optimisation` (Member I, synchronized with `origin/integration-ps08-team-sync-2026-10-31` at `ad246cb`)
+> **Consolidated Integration Baseline:** `integration-ps08-team-sync-2026-10-31` (`ad246cb`)
+> **Protected / Shared Baselines:** `main` (`177fe49`), `integration` (`783b8f4`)
+> **Unmerged Remote Teammate Branches Ready for Integration:**
+> - `origin/feature/cpu-kernel-optimisation` (`b05c4e4`, `1c046cb` — Member I: AVX2 & NEON 2-row register tiling, vectorized scale accumulation, contiguous 2-row `dispatch.cpp` chunking, `inference_engine_bench` target, Ryzen 7 7745HX benchmark CSVs, `ADR-012`)
+> - `origin/feature/transformer-runtime` (`e64078c` — Member U: GCC 16 `<cstdint>` fix for `sentencepiece-static` in `CMakeLists.txt`)
 
 ---
 
-## 2. Phase 2B Deliverables & Verified Achievements
+## 1. Executive Summary & Milestone State
 
-1. **Audited & Mathematically Consistent Benchmark Report:**
-   - Published revised [`docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`](docs/benchmarks/CPU_KERNEL_BENCHMARKS.md).
-   - Recalculated all percentage improvements using standard formula:
-     $$\text{Improvement (\%)} = \frac{\text{Baseline Latency} - \text{Optimised Latency}}{\text{Baseline Latency}} \times 100$$
-   - Audited measurements on AMD Ryzen 7 7745HX:
-     - **Attention Q (8T):** 0.0764 ms $\to$ **0.0534 ms** (**+30.10% latency reduction**, 1.43x throughput speedup, 157.09 GFLOPS, 44.18 GB/s).
-     - **Attention Q (1T):** 0.3696 ms $\to$ **0.3235 ms** (**+12.47% latency reduction**, 1.14x speedup via vectorized scale accumulation).
-     - **Attention O (8T):** 0.0690 ms $\to$ **0.0532 ms** (**+22.90% latency reduction**, 1.30x speedup).
-     - **SwiGLU Gate (8T):** 0.1924 ms $\to$ **0.1603 ms** (**+16.68% latency reduction**, 1.20x speedup via 2-row tiling).
-     - **SwiGLU Up (16T):** 0.1622 ms $\to$ **0.1432 ms** (**+11.71% latency reduction**, 1.13x speedup).
-     - **SwiGLU Down (16T):** 0.1485 ms $\to$ **0.1417 ms** (**+4.58% latency reduction**, 162.80 GFLOPS, 45.79 GB/s).
-     - **LM Head (16T):** 0.8740 ms $\to$ **0.8082 ms** (**+7.53% latency reduction**, 162.18 GFLOPS, 45.61 GB/s).
-2. **Reproducible Validation of the 5 Core Performance Claims:**
-   - **Vectorized Scale Accumulation:** Verified in `dot_q4_0_f32` (+12.47% single-thread gain on Attention Q).
-   - **Two-Row Register Tiling:** Verified in `matmul_q4_0_f32` (+16.68% gain on SwiGLU Gate at 8T).
-   - **ThreadPool Task Reduction & Scheduling:** Verified task queue count drop from 32,000 to 32 on LM Head (+7.53% gain at 16T).
-   - **Software Prefetch Regression:** Confirmed a +29.78% latency penalty on Attention Q (8T) when adding manual `_mm_prefetch`, confirming conflict with Zen 4 hardware stream prefetchers.
-3. **Completed ARM64 NEON Two-Row Tiling Port (`src/kernels/neon/kernels_neon.cpp`):**
-   - Implemented `compute_block_unscaled_dot_neon_vec` and 2-row register tiling in `neon::matmul_q4_0_f32` and `neon::matmul_f32`.
-   - Utilizes ARM64's 32 architectural vector registers to reuse activation vector loads across row pairs.
-   - Preserves scalar fallback on non-ARM64 platforms.
-   - Cross-compiled with `clang++ --target=aarch64-w64-mingw32` with zero errors.
-   - Tested odd dimensions ($1..255$) and boundary tails in `test_kernels_simd.cpp`.
-4. **Governance & Documentation:**
-   - Updated `ADR-012` in [`DECISIONS.md`](DECISIONS.md) to document both AVX2 and NEON 2-row tiling.
-   - Archived baseline, prefetch, and optimized CSVs in [`benchmarks/results/`](benchmarks/results/).
+- **Milestone M0 (Architecture, `.ie` Format, CMake & Scaffold):** **COMPLETE (`VERIFIED`)** (`cb85411`).
+- **Milestone M1 (`.ie` Loader, `FP32` Converter, Scalar Kernels, `KvCache`, `FP32` Transformer):** **COMPLETE (`VERIFIED` / `TESTED`)** (`177fe49` on `main`).
+- **Milestone M2 (`Q4_0` Packing, NEON/AVX2 Kernels, `ThreadPool`, `Q4_0` & Mixed Transformer, SentencePiece Tokenizer, Sampler, CLI):** **CODE COMPLETE & INTEGRATED ON `integration-ps08-team-sync-2026-10-31` (`ad246cb`).**
+- **Milestone M3 (CPU Kernel Optimization, Full 22-Layer Pretrained Checkpoint Verification & Cross-Platform Benchmarking):** **IN PROGRESS:**
+  - **Completed in M3:**
+    - **S (`4515579`):** Live 201-tensor header validation and real-weight `Q4_0` quantisation error audit across all 9 functional tensor roles on `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` (`MeanCosSim >= 0.9888`, `SQNR = 16.51–16.82 dB`).
+    - **I (`58c604d`, `b05c4e4`, `1c046cb`):** Native AMD Ryzen 7 7745HX AVX2 verification, `ThreadPool` `std::exception_ptr` propagation, AVX2 & NEON 2-row register tiling (`matmul_q4_0_f32`, `matmul_f32`), vectorized per-block scale accumulation (`compute_block_unscaled_dot_vec`), contiguous 2-row `dispatch.cpp` chunk scheduling, `inference_engine_bench` CSV artifacts (`21.97x` speedup on `2048x2048` 8T, `162.80 GFLOPS` on `2048x5632` 16T), and audited benchmark calculations.
+    - **P (`ce769c8`, `758abac`, `b96b805`, `da21d62`):** Real-checkpoint SentencePiece C++ vs Python parity (`15/15` prompts exact match against `models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model`), subsegment encoding, seeded 64-bit `xorshift*` `Sampler`, and CLI `--benchmark` harness.
+  - **Remaining in M3:**
+    1. Merge `origin/feature/transformer-runtime` (`e64078c`) and `origin/feature/cpu-kernel-optimisation` into the consolidated integration baseline.
+    2. Resume and finish downloading `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` (`325,472,256` / `2,200,120,064` bytes currently on disk), export 22-layer `.ie` files (`FP32`: `4,400,213,312` B; pure `Q4_0`: `619,113,792` B; mixed `Q4_0`: `1,069,673,792` B), and run full 22-layer golden forward parity and CLI benchmarks.
+    3. Update `benchmarks/bench_kernels.cpp` to be backend-agnostic (`detect_best_backend()`) supporting `--backend <scalar|neon|avx2>` (Task `P1-2`).
+    4. Implement adaptive thread cap for small matrices in `src/kernels/dispatch.cpp` and reconcile prefetch CSV figures and links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` (Task `P2-2`).
+    5. Add incremental per-token streaming detokenisation to `src/app/main.cpp`.
 
 ---
 
-## 3. Top Three Immediate Next Priorities
+## 2. Build & Automated Test Status (`VERIFIED`)
 
-1. **[All / S & I] Merge `feature/cpu-kernel-optimisation` into `integration-ps08-team-sync-2026-10-31` / `integration`:**
-   - Integrate optimized AVX2 and NEON 2-row tiled kernels, benchmark runner, and documentation into the shared branch.
-2. **[Member S — M4 Cross-Platform Benchmarks] Run `inference_engine_bench` on Apple Silicon M4:**
-   - Execute benchmark suite natively on Apple MacBook Air M4 to record native ARM64 NEON hardware numbers.
-3. **[S & U — Issues #1 & #3] Download Full 2.20 GB TinyLlama-1.1B Checkpoint and Execute Real 22-Layer Golden Run:**
-   - Convert `model.safetensors` to `tinyllama-1.1b-q4_0.ie` (`619.11 MB`), and run end-to-end forward inference against real weights.
+| Verification Target | Command | Result |
+| :--- | :--- | :--- |
+| CMake Configure & Release Build | `cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON && cmake --build build --parallel 4` | **PASS (`0` warnings)** |
+| CTest `1/8`: `loader_validation` | `./build/inference_engine_tests --suite loader_validation` | **PASS (`15/15` checks)** |
+| CTest `2/8`: `quant_packing` | `./build/inference_engine_tests --suite quant_packing` | **PASS (`4/4` checks)** |
+| CTest `3/8`: `kernels_scalar` | `./build/inference_engine_tests --suite kernels_scalar` | **PASS (`7/7` checks)** |
+| CTest `4/8`: `kernels_simd` | `./build/inference_engine_tests --suite kernels_simd` | **PASS (`8/8` checks + odd-row tails in `b05c4e4`)** |
+| CTest `5/8`: `kv_cache` | `./build/inference_engine_tests --suite kv_cache` | **PASS (`4/4` checks)** |
+| CTest `6/8`: `tokenizer` | `./build/inference_engine_tests --suite tokenizer` | **PASS (`4/4` checks on real `tokenizer.model`)** |
+| CTest `7/8`: `sampler` | `./build/inference_engine_tests --suite sampler` | **PASS (`6/6` checks)** |
+| CTest `8/8`: `golden_forward` | `./build/inference_engine_tests --suite golden_forward` | **PASS (`3/3` checks)** |
+| Python Converter Self-Test | `python3 tools/convert_to_inference_engine.py --self-test` | **PASS (`FP32`, `Q4_0`, `--keep-embeddings-fp32`)** |
+| Python `Q4_0` Transformer Parity | `python3 tools/verify_transformer_q4.py` | **PASS (`cos_sim >= 0.996359`)** |
+| Python Tokenizer Parity (`15/15`) | `python3 tools/verify_tokenizer_parity.py --self-test` | **PASS (`15/15` prompts on real `tokenizer.model`)** |
+
+---
+
+## 3. Top 3 Project Priorities
+
+1. **Priority 1 (`P1-2` & `P2-2` — Member I):** Make `benchmarks/bench_kernels.cpp` backend-agnostic (`detect_best_backend()`) with `--backend` selection, add adaptive thread cap for `out_dim <= 256` in `src/kernels/dispatch.cpp`, and reconcile prefetch text figures in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`.
+2. **Priority 2 (`P0` — Member S):** Merge `origin/feature/transformer-runtime` (`e64078c`) and `origin/feature/cpu-kernel-optimisation` into the consolidated integration baseline (`ad246cb`), and complete downloading `model.safetensors` (`2.20 GB`).
+3. **Priority 3 (`P0` — Members U & P):** Run full 22-layer golden forward-pass parity (`U`) and end-to-end CLI generation + `--benchmark` across 1, 2, 4, and 8 threads (`P`), plus add incremental streaming detokenisation in `src/app/main.cpp` (`P`).

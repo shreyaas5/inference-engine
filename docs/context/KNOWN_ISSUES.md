@@ -1,87 +1,60 @@
-# `KNOWN_ISSUES.md` — Active Bugs, Stubs, Assumptions & Risks
+# `KNOWN_ISSUES.md` — Active Bugs, Stubs, Limitations & Resolved Ledger
 
-**Last Updated:** 2026-11-01T00:15:00+05:30  
-*(Policy: Never delete an entry silently. When an issue is fixed, change its status to `RESOLVED` and cite the commit/test evidence.)*
-
----
-
-## 1. Functional Stubs & Unimplemented M1–M4 Components
-
-### KI-001: `TransformerEngine::forward_token()` Is an M0 Scaffolding Stub
-- **Status:** `RESOLVED (FOR BOTH FP32 AND Q4_0 — SYNTHETICALLY & NUMPY VALIDATED; REAL CHECKPOINT PENDING)`
-- **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp)
-- **Evidence:** Implemented for `FP32` in commit `5115467` (`feature/transformer`) and extended to `Q4_0` / mixed-precision + `ThreadPool` in commit `26b6b48` / `ce1026a` (`feature/transformer-q4`). Executes all 16 Llama decoder steps across `config_.num_layers` using pre-allocated `FP32` scratch buffers, enforces the `KvCache` commit contract, and matches independent Python NumPy `FP32` (`max_diff = 6.55651e-07`) and `Q4_0` (`tools/verify_transformer_q4.py`, 5 decimal places) references. Full 22-layer execution on the real 2.20 GB `TinyLlama-1.1B-Chat-v1.0` checkpoint remains pending local weight download (`KI-014`).
-
-### KI-002: Causal Grouped Query Attention (GQA) Kernel Not Yet Implemented
-- **Status:** `RESOLVED`
-- **Location:** `scalar::gqa_attention_f32` in [`src/kernels/scalar/kernels_scalar.cpp`](../../src/kernels/scalar/kernels_scalar.cpp) and [`include/inference_engine/kernels.hpp`](../../include/inference_engine/kernels.hpp)
-- **Evidence:** Implemented in commit `5115467` and unit-tested in `tests/test_kernels_scalar.cpp` and `tests/test_golden_forward.cpp`.
-
-### KI-003: SentencePiece Tokenizer Has Not Passed Model-Backed Build/Parity Validation
-- **Status:** `RESOLVED (MODEL-BACKED CTEST & CLI VERIFIED WITH REAL TINYLLAMA TOKENIZER.MODEL)`
-- **Location:** [`src/tokenizer/tokenizer.cpp`](../../src/tokenizer/tokenizer.cpp), [`CMakeLists.txt`](../../CMakeLists.txt), [`tests/test_tokenizer.cpp`](../../tests/test_tokenizer.cpp)
-- **Evidence:** Implemented by Member P in commit `ce769c8` (`feature/runtime-tokenizer`) and verified on the consolidated branch `integration-ps08-team-sync-2026-10-31` against the real 499,723-byte `TinyLlama-1.1B-Chat-v1.0` `tokenizer.model` and `tokenizer_config.json`. `ctest --test-dir build -R tokenizer` passes all model-backed assertions (32,000 vocabulary size, `<unk>=0`, `<s>=1`, `</s>=2`, exact special-token splitting, and round-trip encode/decode).
-
-### KI-004: Offline Python Scripts (`convert_to_inference_engine.py`, `generate_golden_reference.py`) Are Stubs
-- **Status:** `RESOLVED (FOR FP32 & Q4_0 CONVERTER, INSPECTOR, AND GOLDEN BINARY PACKER; REAL 2.20 GB CHECKPOINT GOLDEN RUN PENDING)`
-- **Evidence:** `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py` (`--dtype fp32` in `aa40368` and `--dtype q4_0` / `--keep-embeddings-fp32` / `--report-error` in `cd98ae8`), and `tools/generate_golden_reference.py` (`5115467` / `6dd4fed`) pass `--self-test`, cross-language C++ `ModelLoader` reload tests, and live `TinyLlama-1.1B-Chat-v1.0` HTTP Range tensor verification.
-
-### KI-005: `neon::dot_q4_0_f32` and `avx2::dot_q4_0_f32` Delegate to Scalar Reference
-- **Status:** `RESOLVED` (Merged into `integration` in commit `967f072` and verified natively on both ARM64 and x86-64)
-- **Location:** [`src/kernels/neon/kernels_neon.cpp`](../../src/kernels/neon/kernels_neon.cpp), [`src/kernels/avx2/kernels_avx2.cpp`](../../src/kernels/avx2/kernels_avx2.cpp)
-- **Evidence:** Vectorized `Q4_0` dot products and matrix multiplication implemented and verified natively on Apple M4 ARM64 (`NEON`) and AMD Ryzen 7 7745HX x86-64 (`AVX2` + `FMA`).
+> **Last Updated:** 2026-11-01
+> **Consolidated Baseline:** `integration-ps08-team-sync-2026-10-31` (`ad246cb`)
+> **Active Feature Branch:** `feature/cpu-kernel-optimisation` (Member I)
 
 ---
 
-## 2. Numerical, Architectural & Code Review Follow-Ups
+## 1. Active Issues & Limitations
 
-### KI-006: RoPE Dimension Pairing Convention (`rotate_half` vs Interleaved)
-- **Status:** `OPEN — VERIFIED AGAINST HUGGING FACE FORMULA IN NUMPY, PENDING REAL CHECKPOINT GOLDEN RUN`
-- **Location:** `scalar::rope_inplace_f32` in [`src/kernels/scalar/kernels_scalar.cpp`](../../src/kernels/scalar/kernels_scalar.cpp)
-- **Description:** `rope_inplace_f32` implements the Hugging Face Llama `rotate_half` convention, pairing element `i` with `i + head_dim / 2` (`i = 0..31` with `32..63`). Verified to match independent NumPy `rotate_half` (`max_diff = 6.56e-7`), and expected to match unpermuted `TinyLlama-1.1B-Chat-v1.0` `.safetensors` weights directly—must still be confirmed against real checkpoint golden fixtures.
+### `KI-004` — Local `TinyLlama-1.1B-Chat-v1.0/model.safetensors` Download Is Incomplete (`BLOCKED`)
+- **Severity:** High (`P0` blocker for full 22-layer `.ie` conversion and real-weight inference)
+- **Owner:** **S** (affects **U**, **I**, **P**)
+- **Description:** `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` on disk is currently `325,472,256` bytes (`310.4 MB`) out of the expected `2,200,120,064` bytes (`2.20 GB`, ~14.8%). While the 19,660-byte JSON header and first 3 layers (`model.embed_tokens.weight` + Layers `0..2`) are intact and verified via `tools/inspect_checkpoint.py --eval-real-quant-error`, full 22-layer `.ie` model conversion (`models/tinyllama-{fp32,q4_0,q4_0-mixed}.ie`) requires resuming the remaining `1.87 GB` download.
+- **Workaround / Next Step:** Run `curl -L -C -` or `huggingface-cli download TinyLlama/TinyLlama-1.1B-Chat-v1.0 model.safetensors --local-dir models/TinyLlama-1.1B-Chat-v1.0` and then invoke `tools/convert_to_inference_engine.py`.
 
-### KI-007: `Q4_0` Rounding Parity with Upstream GGML
-- **Status:** `RESOLVED` (Merged into `integration` in commit `967f072`)
-- **Location:** `quantize_row_q4_0` in [`src/kernels/quant_q4_0.cpp`](../../src/kernels/quant_q4_0.cpp), [`tests/test_quant_packing.cpp`](../../tests/test_quant_packing.cpp)
-- **Evidence:** Implemented explicit 1,024-element test comparing scale `d` and packed nibble bytes `qs[0..15]` block-by-block against upstream GGML quantization logic. Verified bit-exact parity in `test_quant_packing`.
+### `KI-015` — Two Remote Feature Branches (`b05c4e4`/`1c046cb` and `e64078c`) Pending Merge into Consolidated Integration Baseline
+- **Severity:** Medium (`P0` integration task)
+- **Owner:** **S** (with **I** and **U**)
+- **Description:**
+  1. Member I pushed `origin/feature/cpu-kernel-optimisation` (`b05c4e4`, `1c046cb`) containing AVX2 and NEON 2-row register tiling, vectorized scale accumulation, contiguous 2-row `dispatch.cpp` chunk scheduling, `inference_engine_bench`, and audited benchmark figures.
+  2. Member U pushed `origin/feature/transformer-runtime` (`e64078c84e7832deb0444f51ffad40c45154438d`, parent `5929a17`) adding `target_compile_options(sentencepiece-static PRIVATE -include cstdint)` in `CMakeLists.txt` for GCC 16 compatibility.
 
-### KI-010: Duplicate Tensor Binding Logic Between `TransformerEngine::init()` and `ModelLoader::bind_transformer_weights()`
-- **Status:** `RESOLVED` (Fixed in commit `6dd4fed` on `feature/model-format-q4` / `bce66ae` on `feature/transformer-bindings`)
-- **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp), [`include/inference_engine/transformer.hpp`](../../include/inference_engine/transformer.hpp), [`include/inference_engine/loader.hpp`](../../include/inference_engine/loader.hpp)
-- **Evidence:** Refactored `TransformerEngine` to store `TransformerWeightBindings bindings_{}` and delegate weight validation and binding to `ModelLoader::bind_transformer_weights(&bindings_)`, supporting both `FP32` and `Q4_0` models via `TensorView` (`data_f32()` / `data_q4_0()`).
+### `KI-016` — ARM64 NEON Kernels & Benchmark Backend Agnosticism (`IN PROGRESS`)
+- **Severity:** Medium (`P1` performance parity on Apple Silicon)
+- **Owner:** **I**
+- **Description:** 2-row register tiling and vectorized scale accumulation have been ported to `src/kernels/neon/kernels_neon.cpp` (`1c046cb`) and verified via `clang++ --target=aarch64-w64-mingw32` syntax-only checking and odd-row/boundary tail unit tests. `benchmarks/bench_kernels.cpp` currently hardcodes `avx2::matmul_q4_0_f32` and `SimdBackend::Avx2`.
+- **Resolution Plan:** Update `benchmarks/bench_kernels.cpp` to dispatch via `detect_best_backend()`, support `--backend <scalar|neon|avx2>`, and allow capturing Apple Silicon NEON kernel benchmark CSVs.
 
-### KI-011: `generate_golden_reference.py` Decode Logit Indexing & Unchecked `gen_ref_logits` in `test_golden_forward.cpp`
-- **Status:** `RESOLVED (FOR SYNTHETIC GOLDEN FIXTURES; REAL CHECKPOINT GOLDEN RUN PENDING)`
-- **Location:** [`tools/generate_golden_reference.py`](../../tools/generate_golden_reference.py), [`tests/test_golden_forward.cpp`](../../tests/test_golden_forward.cpp)
-- **Evidence:** Updated `tools/generate_golden_reference.py` so `gen_logits[step]` records forward logits after appending `next_token` at `pos = prompt_len + step`, and added per-step `gen_ref_logits` verification (`max_diff <= 1e-3f`) in `tests/test_golden_forward.cpp`.
+### `KI-017` — CLI Generation Performs Batch Detokenisation After Decode Loop Rather Than Per-Token Streaming (`PARTIALLY IMPLEMENTED`)
+- **Severity:** Low-Medium (`P1` UX/runtime polish)
+- **Owner:** **P**
+- **Description:** In `src/app/main.cpp`, generated token IDs are accumulated into `generated_ids` during the decode loop and decoded in a single batch call (`tokenizer.decode(generated_ids, &generated_text)`) after generation finishes.
+- **Resolution Plan:** Add incremental prefix-diff decoding inside the decode loop so each newly generated token piece is flushed to `std::cout` immediately while preserving SentencePiece leading-space (`▁`) semantics.
 
-### KI-012: `TransformerEngine::forward_token()` Not Yet Wired to `dispatch_matmul_q4_0_f32`
-- **Status:** `RESOLVED` (Implemented and verified in `feature/transformer-q4` `ce1026a`)
-- **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp), [`include/inference_engine/transformer.hpp`](../../include/inference_engine/transformer.hpp)
-- **Evidence:** Implemented `TransformerEngine::matmul()` which dynamically routes to `dispatch_matmul_f32` or `dispatch_matmul_q4_0_f32` with runtime SIMD selection and optional `ThreadPool` chunking. Implemented per-token row dequantisation for `Q4_0` `embed_tokens` via `dequantize_row_q4_0` and `Q4_0` `lm_head` projection. Verified end-to-end against independent NumPy implementation (`tools/verify_transformer_q4.py`) across prefill and 4 decode steps, confirming matching numerical output between C++ and NumPy to 5 decimal places.
+### `KI-006` & `KI-014` — Per-Token RoPE Trigonometric Calls & Single-Threaded GQA Attention (`P2` Optimization)
+- **Severity:** Low (`P2` optimization)
+- **Owner:** **U**
+- **Description:** `scalar::rope_inplace` computes `std::pow`, `std::cos`, and `std::sin` on every token (`32 * 22 = 704` pairs/token), and `scalar::attention_gqa` runs on a single thread across the 32 query heads. Precomputing `[max_seq_len, head_dim / 2]` `cos`/`sin` tables (`512 KB` total) in `TransformerEngine::init()` and parallelizing `attention_gqa` for long contexts (`pos >= 256`) will reduce non-matmul overhead.
 
-### KI-013: Native x86-64 AVX2/FMA Verification Pending
-- **Status:** `RESOLVED` (Verified natively on AMD Ryzen 7 7745HX Zen 4 x86-64 in commit `58c604d` and optimized in `feature/cpu-kernel-optimisation`)
-- **Location:** [`src/kernels/avx2/kernels_avx2.cpp`](../../src/kernels/avx2/kernels_avx2.cpp), [`src/common/common.cpp`](../../src/common/common.cpp), [`tests/test_kernels_simd.cpp`](../../tests/test_kernels_simd.cpp)
-- **Evidence:** Natively executed and optimized on AMD Ryzen 7 7745HX (8C/16T, Windows 11, Clang 23.1.4). Optimized via Vectorized Scale Accumulation and 2-Row Register Tiling (`ADR-012`). Measured 157.09 GFLOPS (44.18 GB/s, 21.97x speedup vs scalar) on Attention Q and 162.80 GFLOPS on SwiGLU Down. Detailed benchmark report in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`.
-
-### KI-014: Full 2.20 GB TinyLlama Checkpoint Local Download & 22-Layer Golden Run
-- **Status:** `OPEN — REPRODUCIBLE COMMANDS & REAL-TENSOR SLICES VERIFIED`
-- **Location:** `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py`, `models/TinyLlama-1.1B-Chat-v1.0/`
-- **Description:** Real checkpoint tensor inventory (`201` `BF16` tensors, `2,200,096,768` payload bytes) and real-tensor `Q4_0` quantisation errors across 9 projection roles are verified via `tools/inspect_checkpoint.py --eval-real-quant-error`. `config.json`, `tokenizer_config.json`, and `tokenizer.model` (`499,723` bytes) are downloaded locally. Full 2.20 GB `model.safetensors` download (`curl -C - -L -o models/TinyLlama-1.1B-Chat-v1.0/model.safetensors "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/model.safetensors"`) and offline conversion to `tinyllama-1.1b-fp32.ie` / `tinyllama-1.1b-q4_0.ie` remain to be executed before claiming real TinyLlama text generation.
-
-### KI-015: Software Prefetching Degrades AVX2 Q4_0 Throughput on AMD Zen 4
-- **Status:** `RESOLVED (ANALYZED & SAFELY DISCARDED BASED ON EMPIRICAL BENCHMARKS)`
-- **Location:** `src/kernels/avx2/kernels_avx2.cpp`
-- **Evidence:** Inserting `_mm_prefetch(weight_row + b + 4)` into the inner block accumulation loop caused a 10–23% latency penalty on AMD Ryzen 7 7745HX (Attention Q 8T regressed from 0.053 ms to 0.069 ms). Zen 4 hardware stream prefetchers already anticipate contiguous 64-byte aligned blocks with near-zero latency; explicit software prefetches consumed instruction decode slots and polluted load queues. Software prefetch was removed and documented in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` and `ADR-012`.
+### `KI-018` — 16-Thread SMT Wake-Up Overhead on Small `256x2048` Attention K/V Projections (`IN PROGRESS`)
+- **Severity:** Low (`P2` optimization)
+- **Owner:** **I**
+- **Description:** On AMD Ryzen 7 7745HX (`benchmarks/results/benchmarks_optimised.csv`), `256x2048` Attention K/V projections achieve `0.0103–0.0112 ms` (`93.6–101.8 GFLOPS`) at 8 threads (physical cores), but regress to `0.0211–0.0336 ms` (`31.2–49.7 GFLOPS`) at 16 threads due to SMT synchronization overhead on a `144 KB` matrix. Also, `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` Section 2.5 has two minor text typos when quoting `benchmarks_prefetch.csv` (`0.0693 ms` / `121.05 GFLOPS` on `2048x2048` 8T and `0.1676 ms` / `137.64 GFLOPS` on `2048x5632` 8T) and machine-local links that should be cleaned up.
+- **Resolution Plan:** Add an adaptive thread/chunk cap in `src/kernels/dispatch.cpp` when `out_dim <= 256` to avoid scheduling more threads than rows, and reconcile text figures in `CPU_KERNEL_BENCHMARKS.md`.
 
 ---
 
-## 3. Environment, Build & Workflow Issues
+## 2. Resolved Issues Ledger
 
-### KI-008: Python Dependencies & SentencePiece C++ Library Not Installed in Default Host Env
-- **Status:** `RESOLVED FOR C++ SENTENCEPIECE; PYTHON VENV OPTIONAL FOR HF PARITY`
-- **Evidence:** CMake now discovers SentencePiece `>= 0.2.0` through `pkg-config` or fetches a pinned upstream revision (`google/sentencepiece` at `17d7580d6407802f85855d2cc9190634e2c95624`) automatically during `cmake -B build`. On this macOS host, `/usr/bin/python3` provides `numpy 2.0.2`.
-
-### KI-009: Unstaged EOF Newline Diffs in Working Tree
-- **Status:** `RESOLVED`
+| ID | Summary | Resolved By & Commit | Verification Evidence |
+| :--- | :--- | :--- | :--- |
+| `KI-001` | `Q4_0` `.ie` loader & converter unimplemented in M1 | **S** (`cb176b3`) | `loader_validation` CTest (`6/6`) + `convert_to_inference_engine.py --self-test` |
+| `KI-002` | `neon::dot_q4_0_f32` and `avx2::dot_q4_0_f32` delegated to scalar in M1 | **I** (`f76ab55`, `58c604d`, `b05c4e4`, `1c046cb`) | `kernels_simd` CTest (`8/8`) + Ryzen 7 7745HX benchmarks (`21.97x` on `2048x2048` 8T) + NEON 2-row tiling |
+| `KI-003` | SentencePiece C++ library not linked in M1 (`Tokenizer` returned `NotImplemented`) | **P** (`ce769c8`, `5929a17`) | `tokenizer` CTest (`4/4`) + `verify_tokenizer_parity.py --self-test` (`15/15` prompts) |
+| `KI-005` | `Sampler` temperature / top-p sampling unimplemented in M1 | **P** (`ce769c8`) | `sampler` CTest (`6/6`) |
+| `KI-007` | CLI generation loop & `--benchmark` harness stubbed in M1 | **P** (`ce769c8`) | Synthetic 1-layer `.ie` + real `tokenizer.model` E2E CLI benchmark (`329.1 tok/s` decode) |
+| `KI-011` | Duplicate `TransformerWeightBindings` definitions across `loader.hpp` and `transformer.hpp` | **S & U** (`6dd4fed`, `955bd91`) | Unified in `include/inference_engine/loader.hpp` (`ADR-009`) |
+| `KI-012` | `TransformerEngine::forward_token` rejected `Q4_0` weights and ignored `ThreadPool` | **U** (`ce1026a`) | `transformer_q4` CTest (`7/7`) + `verify_transformer_q4.py` (`cos_sim >= 0.996359`) |
+| `KI-013` | `ThreadPool::parallel_for` lacked worker exception propagation (`std::terminate` risk) | **I** (`58c604d`) | `std::exception_ptr` capture/rethrow (`ADR-010`), verified in `kernels_simd` CTest |

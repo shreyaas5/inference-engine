@@ -1,11 +1,24 @@
-# `SESSION_HANDOFF.md` — Immediate Continuation Instructions
+# `SESSION_HANDOFF.md` — Immediate Session-to-Session Continuation Guide
 
-**Last Updated:** 2026-11-01T00:25:00+05:30  
-**Last Session Role:** Principal CPU Performance Engineer, SIMD Optimisation Specialist, and Numerical Computing Researcher (Member I — Branch `feature/cpu-kernel-optimisation`, Phase 2B)  
+> **Last Updated:** 2026-11-01
+> **Current Active Branch:** `feature/cpu-kernel-optimisation` (Member I, synchronized with `origin/integration-ps08-team-sync-2026-10-31` at `ad246cb`)
+> **Consolidated Integration Baseline:** `integration-ps08-team-sync-2026-10-31` (`ad246cb`)
+> **Self-Contained Member Handoff Suite:** [`docs/team_handoffs/`](docs/team_handoffs/) (`00` through `06`)
 
 ---
 
-## 1. What Was Completed in Phase 2B
+## 1. Quick Orientation for Member I / Continuing Session
+
+Member I owns:
+- `Q4_0` Block Quantisation & IEEE 754 FP16 Conversion (`src/kernels/quant_q4_0.cpp`, `include/inference_engine/quant.hpp`)
+- Architecture-Specific SIMD Kernels: x86-64 AVX2/FMA (`src/kernels/avx2/kernels_avx2.cpp`) & ARM64 NEON (`src/kernels/neon/kernels_neon.cpp`)
+- Runtime CPU Dispatch & Multi-Threaded Slicing (`src/kernels/dispatch.cpp`)
+- Persistent Worker `ThreadPool` (`src/kernels/threading/thread_pool.cpp`, `include/inference_engine/thread_pool.hpp`)
+- Kernel Benchmarks & Profiling (`benchmarks/bench_kernels.cpp`, `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`, `benchmarks/results/`)
+
+---
+
+## 2. What Was Completed in Phase 2B
 
 1. **Benchmark Report Audit & Recalculation:**
    - Audited every figure in [`docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`](docs/benchmarks/CPU_KERNEL_BENCHMARKS.md).
@@ -17,39 +30,41 @@
      1. Vectorized scale accumulation (+12.47% single-thread gain on Attention Q).
      2. Two-row tiling (+16.68% gain on SwiGLU Gate at 8T).
      3. ThreadPool task reduction (reduced LM Head tasks from 32,000 to 32).
-     4. Actual scheduling overhead (+7.53% gain on LM Head at 16T).
-     5. Software prefetching regression (+29.78% latency penalty on Attention Q at 8T on Zen 4).
-3. **ARM64 NEON Two-Row Register Tiling Port:**
-   - Ported 2-row register tiling and vectorized scale accumulation to [`src/kernels/neon/kernels_neon.cpp`](src/kernels/neon/kernels_neon.cpp) using native ARM64 NEON instructions (`float32x4_t`, `vld1q_u8`, `vandq_u8`, `vshrq_n_u8`, `vsubq_s8`, `vmovl_s8`, `vmovl_s16`, `vcvtq_f32_s32`, `vfmaq_f32`, `vaddvq_f32`).
-   - Reused activation vector loads across row pairs, leveraging ARM64's 32 vector registers.
-   - Preserved scalar fallback for non-ARM64 platforms.
-   - Cross-compiled with `clang++ --target=aarch64-w64-mingw32` with zero warnings.
-   - Tested odd output dimensions and boundary tails ($1..255$) in `test_kernels_simd.cpp`.
-4. **Governance & Documentation:**
-   - Updated `ADR-012` in [`DECISIONS.md`](DECISIONS.md).
-   - All 8 CTest suites pass cleanly (100%).
+     4. Actual scheduling overhead (0.003 ms queue latency).
+     5. Software prefetching regression (+29.78% latency penalty on Zen 4).
+3. **Completed ARM64 NEON Optimisation (Task `P1-1`):**
+   - Ported 2-row register tiling (`matmul_q4_0_f32`, `matmul_f32`) and vectorized scale accumulation (`dot_q4_0_f32`) to native ARM64 NEON in [`src/kernels/neon/kernels_neon.cpp`](src/kernels/neon/kernels_neon.cpp).
+   - Verified clean odd-row and boundary tail fallbacks via `test_simd_matmul_odd_rows_and_tails()`.
+   - Verified cross-compilation syntax & type check with `clang++ --target=aarch64-w64-mingw32` (0 warnings, 0 errors).
+4. **Integration Baseline Merge:**
+   - Cleanly synchronized `feature/cpu-kernel-optimisation` with `origin/integration-ps08-team-sync-2026-10-31` (`ad246cb`), incorporating Member P's subsegment tokenizer encoding and team handoff documentation suite.
 
 ---
 
-## 2. What Works Right Now (Empirical Measurements)
+## 3. Working vs. Pending Components for Member I
 
-- **AMD Ryzen 7 7745HX Measured Performance:**
-  - **Attention Q ($2048 \times 2048$, 8T):** 0.0764 ms $\to$ **0.0534 ms** (**+30.10% latency reduction**, 1.43x throughput speedup, 157.09 GFLOPS, 44.18 GB/s).
-  - **Attention Q ($2048 \times 2048$, 1T):** 0.3696 ms $\to$ **0.3235 ms** (**+12.47% latency reduction**, 1.14x speedup).
-  - **SwiGLU Gate ($5632 \times 2048$, 8T):** 0.1924 ms $\to$ **0.1603 ms** (**+16.68% latency reduction**, 1.20x speedup).
-  - **SwiGLU Down ($2048 \times 5632$, 16T):** 0.1485 ms $\to$ **0.1417 ms** (**+4.58% latency reduction**, 162.80 GFLOPS, 45.79 GB/s).
-  - **LM Head ($32000 \times 2048$, 16T):** 0.8740 ms $\to$ **0.8082 ms** (**+7.53% latency reduction**, 162.18 GFLOPS, 45.61 GB/s).
-- **Numerical Parity:**
-  - Max absolute error vs scalar oracle $< 4.2 \times 10^{-5}$.
-  - Relative $L_2$ error $< 3.5 \times 10^{-7}$ (well below single-precision machine epsilon).
+- **Working & Verified (`8/8` CTest suites passing):**
+  - AVX2/FMA & ARM64 NEON 2-row register tiling & vectorized scale accumulation.
+  - Multi-row contiguous chunk scheduling in `src/kernels/dispatch.cpp`.
+  - All 8 unit test suites pass in ~2.08s with zero warnings.
+- **Pending Implementation Tasks:**
+  - **Task `P1-2`:** Update `benchmarks/bench_kernels.cpp` to use `detect_best_backend()` rather than hardcoding `SimdBackend::Avx2` and add `--backend <scalar|neon|avx2>` CLI support.
+  - **Task `P2-1`:** Add adaptive thread-count / chunk cap in `src/kernels/dispatch.cpp` for small matrices (`out_dim <= 256`) where SMT wake-up overhead exceeds physical-core latency.
+  - **Task `P2-2`:** Reconcile minor prefetch CSV text figures and convert machine-local links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` to relative links.
 
 ---
 
-## 3. Immediate Next Steps
+## 4. Exact Next Commands to Run
 
-1. **Merge into Integration Branch:**
-   - Merge `feature/cpu-kernel-optimisation` into `integration-ps08-team-sync-2026-10-31` and `integration`.
-2. **Apple Silicon M4 Native Benchmark:**
-   - Coordinate with Member S to run `./build/inference_engine_bench` on Apple MacBook Air M4 to record native NEON 2-row tiling numbers.
-3. **Execute Full 2.20 GB Checkpoint Conversion:**
-   - Run `tools/convert_to_inference_engine.py` on real `model.safetensors` to produce `tinyllama-1.1b-q4_0.ie` (`619.11 MB`).
+```bash
+# 1. Build and test all targets
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
+
+# 2. Run kernel benchmark executable
+./build/inference_engine_bench --warmup 5 --iters 20 --threads 8
+
+# 3. Cross-compile NEON kernels syntax check
+clang++ --target=aarch64-w64-mingw32 src/kernels/neon/kernels_neon.cpp -Iinclude -std=c++17 -Wall -Wextra -Wpedantic -fsyntax-only
+```

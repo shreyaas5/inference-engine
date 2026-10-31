@@ -1,10 +1,12 @@
 #include "inference_engine/tokenizer.hpp"
 
 #include <array>
+#include <memory>
 #include <string>
 #include <sstream>
 #include <vector>
 
+#include "sentencepiece_model.pb.h"
 #include "sentencepiece_processor.h"
 
 namespace inference_engine {
@@ -48,6 +50,7 @@ Status Tokenizer::load(const std::string& model_path) {
     loaded_ = false;
     model_path_.clear();
     processor_.reset();
+    processor_no_prefix_.reset();
 
     auto processor = std::make_shared<sentencepiece::SentencePieceProcessor>();
     const auto status = processor->Load(model_path);
@@ -65,7 +68,18 @@ Status Tokenizer::load(const std::string& model_path) {
                              "32000-piece vocabulary and <unk>/<s></s> IDs 0/1/2");
     }
 
+    auto proto = std::make_unique<sentencepiece::ModelProto>(processor->model_proto());
+    proto->mutable_normalizer_spec()->set_add_dummy_prefix(false);
+    auto processor_no_prefix = std::make_shared<sentencepiece::SentencePieceProcessor>();
+    const auto status_no_prefix = processor_no_prefix->Load(std::move(proto));
+    if (!status_no_prefix.ok()) {
+        return Status::Error(StatusCode::InternalError,
+                             "Failed to initialize SentencePiece without dummy prefix: " +
+                                 status_no_prefix.ToString());
+    }
+
     processor_ = std::move(processor);
+    processor_no_prefix_ = std::move(processor_no_prefix);
     model_path_ = model_path;
     loaded_ = true;
     return Status::Ok();
@@ -103,7 +117,8 @@ Status Tokenizer::encode(const std::string& text,
             continue;
         }
 
-        Status status = encode_text(*processor_, text.substr(segment_start, cursor - segment_start),
+        const auto& active_proc = (segment_start == 0) ? *processor_ : *processor_no_prefix_;
+        Status status = encode_text(active_proc, text.substr(segment_start, cursor - segment_start),
                                     out_ids);
         if (!status.ok()) {
             out_ids->clear();
@@ -114,7 +129,8 @@ Status Tokenizer::encode(const std::string& text,
         segment_start = cursor;
     }
 
-    Status status = encode_text(*processor_, text.substr(segment_start), out_ids);
+    const auto& active_proc = (segment_start == 0) ? *processor_ : *processor_no_prefix_;
+    Status status = encode_text(active_proc, text.substr(segment_start), out_ids);
     if (!status.ok()) {
         out_ids->clear();
         return status;
@@ -152,7 +168,9 @@ Status Tokenizer::decode(const std::vector<int32_t>& token_ids, std::string* out
         return Status::Ok();
     };
 
-    for (int32_t id : token_ids) {
+    bool prev_is_special = false;
+    for (size_t i = 0; i < token_ids.size(); ++i) {
+        int32_t id = token_ids[i];
         if (id < 0 || id >= processor_->GetPieceSize()) {
             out_text->clear();
             return Status::Error(StatusCode::OutOfBounds,
@@ -166,7 +184,18 @@ Status Tokenizer::decode(const std::vector<int32_t>& token_ids, std::string* out
             }
         }
         if (special == nullptr) {
+            // Match Hugging Face LlamaTokenizer (legacy=False) decode behavior:
+            // if following a special token at index 1 and the piece does not start with
+            // the SentencePiece dummy prefix space ('\xe2\x96\x81'), a space is inserted.
+            if (prev_is_special && i == 1) {
+                const std::string piece = processor_->IdToPiece(id);
+                constexpr const char* kDummyPrefix = "\xe2\x96\x81";
+                if (piece.rfind(kDummyPrefix, 0) != 0) {
+                    out_text->push_back(' ');
+                }
+            }
             segment.push_back(id);
+            prev_is_special = false;
             continue;
         }
 
@@ -176,6 +205,7 @@ Status Tokenizer::decode(const std::vector<int32_t>& token_ids, std::string* out
             return status;
         }
         out_text->append(special->text);
+        prev_is_special = true;
     }
     const Status status = decode_segment();
     if (!status.ok()) {
