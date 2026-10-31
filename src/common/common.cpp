@@ -105,22 +105,41 @@ bool is_backend_available(SimdBackend backend) noexcept {
     }
     if (backend == SimdBackend::Avx2) {
 #if defined(__x86_64__) || defined(_M_X64)
+        static const bool has_avx2_fma = []() noexcept -> bool {
 #if defined(__GNUC__) || defined(__clang__)
-        __builtin_cpu_init();
-        return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+            __builtin_cpu_init();
+            return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
 #elif defined(_MSC_VER)
-        int info[4] = {0, 0, 0, 0};
-        __cpuid(info, 0);
-        if (info[0] >= 7) {
+            int info[4] = {0, 0, 0, 0};
+            __cpuid(info, 0);
+            if (info[0] < 7) {
+                return false;
+            }
+
+            // Check OSXSAVE, AVX, and FMA on Leaf 1
+            __cpuid(info, 1);
+            const bool osxsave = (info[2] & (1 << 27)) != 0;
+            const bool fma = (info[2] & (1 << 12)) != 0;
+            const bool avx = (info[2] & (1 << 28)) != 0;
+            if (!osxsave || !fma || !avx) {
+                return false;
+            }
+
+            // Verify OS has enabled YMM state saving (XGETBV bits 1 and 2)
+            const unsigned long long xcr0 = _xgetbv(0);
+            if ((xcr0 & 0x6ULL) != 0x6ULL) {
+                return false;
+            }
+
+            // Check AVX2 on Leaf 7 Subleaf 0
             int ext[4] = {0, 0, 0, 0};
             __cpuidex(ext, 7, 0);
-            const bool has_avx2 = (ext[1] & (1 << 5)) != 0;
-            return has_avx2;
-        }
-        return false;
+            return (ext[1] & (1 << 5)) != 0;
 #else
-        return false;
+            return false;
 #endif
+        }();
+        return has_avx2_fma;
 #else
         return false;
 #endif
