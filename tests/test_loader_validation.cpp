@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "inference_engine/loader.hpp"
+#include "inference_engine/transformer.hpp"
 
 namespace inference_engine::testing {
 
@@ -595,6 +596,26 @@ bool test_q4_0_and_mixed_precision_binding() {
         mp_bindings.lm_head.dtype() != DataType::FP32 ||
         mp_bindings.layers[0].q_proj.dtype() != DataType::Q4_0) {
         std::cerr << "Mixed-precision TensorView dtypes did not match expected policy\n";
+        return false;
+    }
+
+    // Verify TransformerEngine::init binds Q4_0 and mixed-precision models via ModelLoader::bind_transformer_weights.
+    TransformerEngine q4_engine;
+    if (!q4_engine.init(cfg, &q4_loader).ok()) {
+        std::cerr << "TransformerEngine::init failed on valid Q4_0 ModelLoader\n";
+        return false;
+    }
+    if (!q4_engine.initialized() ||
+        q4_engine.bindings().embed_tokens.data_q4_0() == nullptr ||
+        q4_engine.bindings().layers[0].q_proj.data_q4_0() == nullptr ||
+        q4_engine.bindings().layers[0].input_layernorm.data_f32() == nullptr ||
+        q4_engine.bindings().final_norm.data_f32() == nullptr) {
+        std::cerr << "TransformerEngine::bindings() did not preserve Q4_0/FP32 TensorViews\n";
+        return false;
+    }
+    std::vector<float> dummy_logits(cfg.vocab_size, 0.0f);
+    if (q4_engine.forward_token(0, 0, dummy_logits.data()).code != StatusCode::NotImplemented) {
+        std::cerr << "Expected Q4_0 forward_token to return NotImplemented until Q4_0 layer matmuls are wired\n";
         return false;
     }
 

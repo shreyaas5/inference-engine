@@ -575,6 +575,18 @@ bool test_offline_golden_fixture_if_present() {
             std::cerr << "Golden decode forward failed at step " << step << "\n";
             return false;
         }
+
+        // Verify logits after decode forward pass
+        float step_max_diff = 0.0f;
+        const float* ref_step_logits = &gen_ref_logits[static_cast<size_t>(step) * vocab_size];
+        for (uint32_t i = 0; i < vocab_size; ++i) {
+            step_max_diff = std::max(step_max_diff, std::fabs(logits[i] - ref_step_logits[i]));
+        }
+        if (step_max_diff > 1e-3f) {
+            std::cerr << "Golden decode logits exceeded tolerance at step " << step
+                      << " (max_diff=" << step_max_diff << ")\n";
+            return false;
+        }
     }
 
     std::cout << "[SUCCESS] Golden reference parity verified across prompt and "
