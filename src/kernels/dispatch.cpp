@@ -32,14 +32,23 @@ void dispatch_matmul_f32(float* out,
                          size_t in_dim,
                          SimdBackend backend,
                          ThreadPool* pool) noexcept {
-    if (pool != nullptr && pool->num_threads() > 1) {
+    const bool use_neon = (backend == SimdBackend::Neon && is_backend_available(SimdBackend::Neon));
+    const bool use_avx2 = (backend == SimdBackend::Avx2 && is_backend_available(SimdBackend::Avx2));
+
+    if (pool != nullptr && pool->num_threads() > 1 && out_dim > 1) {
+        auto dot_kernel = use_neon ? neon::dot_f32 : (use_avx2 ? avx2::dot_f32 : scalar::dot_f32);
         pool->parallel_for(out_dim, [&](size_t r, size_t /*tid*/) {
-            out[r] = dispatch_dot_f32(weight + r * in_dim, x, in_dim, backend);
+            out[r] = dot_kernel(weight + r * in_dim, x, in_dim);
         });
         return;
     }
-    for (size_t r = 0; r < out_dim; ++r) {
-        out[r] = dispatch_dot_f32(weight + r * in_dim, x, in_dim, backend);
+
+    if (use_neon) {
+        neon::matmul_f32(out, weight, x, out_dim, in_dim);
+    } else if (use_avx2) {
+        avx2::matmul_f32(out, weight, x, out_dim, in_dim);
+    } else {
+        scalar::matmul_f32(out, weight, x, out_dim, in_dim);
     }
 }
 
@@ -51,14 +60,23 @@ void dispatch_matmul_q4_0_f32(float* out,
                               SimdBackend backend,
                               ThreadPool* pool) noexcept {
     const size_t blocks_per_row = in_dim / kQ4_0BlockElements;
-    if (pool != nullptr && pool->num_threads() > 1) {
+    const bool use_neon = (backend == SimdBackend::Neon && is_backend_available(SimdBackend::Neon));
+    const bool use_avx2 = (backend == SimdBackend::Avx2 && is_backend_available(SimdBackend::Avx2));
+
+    if (pool != nullptr && pool->num_threads() > 1 && out_dim > 1) {
+        auto dot_kernel = use_neon ? neon::dot_q4_0_f32 : (use_avx2 ? avx2::dot_q4_0_f32 : scalar::dot_q4_0_f32);
         pool->parallel_for(out_dim, [&](size_t r, size_t /*tid*/) {
-            out[r] = dispatch_dot_q4_0_f32(weight_blocks + r * blocks_per_row, x, in_dim, backend);
+            out[r] = dot_kernel(weight_blocks + r * blocks_per_row, x, in_dim);
         });
         return;
     }
-    for (size_t r = 0; r < out_dim; ++r) {
-        out[r] = dispatch_dot_q4_0_f32(weight_blocks + r * blocks_per_row, x, in_dim, backend);
+
+    if (use_neon) {
+        neon::matmul_q4_0_f32(out, weight_blocks, x, out_dim, in_dim);
+    } else if (use_avx2) {
+        avx2::matmul_q4_0_f32(out, weight_blocks, x, out_dim, in_dim);
+    } else {
+        scalar::matmul_q4_0_f32(out, weight_blocks, x, out_dim, in_dim);
     }
 }
 
