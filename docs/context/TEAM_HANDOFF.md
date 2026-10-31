@@ -25,11 +25,11 @@
   - `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py`
   - `tests/test_loader_validation.cpp`
   - `CURRENT_STATUS.md` and `docs/context/*`
-- **Already Done (M0):** `.ie` v1 binary specification, `ModelLoader::load_from_buffer()`, `ModelLoader::load_from_file()` (`mmap`), `ModelLoader::build_ie_image()`, checked 64-bit arithmetic, 64-byte alignment & non-overlap validation, and `loader_validation` CTest suite.
-- **Immediate Next Step (M1 — Issue `#1`):** Implement `.safetensors` reading and `BF16 -> FP32` `.ie` model writing in `tools/convert_to_inference_engine.py`, and verify loading all 201 TinyLlama tensors.
+- **Completed (M0 & M1 Issue `#1` in commit `aa40368`, merged to `integration`):** `.ie` v1 binary specification, `ModelLoader::load_from_buffer()`, `ModelLoader::load_from_file()` (`mmap`), `ModelLoader::bind_transformer_weights()`, two-pass streaming `BF16 -> FP32` `.safetensors -> .ie` conversion (`tools/convert_to_inference_engine.py`), and live 201-tensor header verification (`tools/inspect_checkpoint.py --inspect-remote-hf`).
+- **Immediate Next Step:** Download the 2.20 GB `model.safetensors` payload locally to generate the full 4.40 GB `tinyllama-1.1b-fp32.ie` model and run real-checkpoint golden validation with U.
 - **Start Command:**
   ```bash
-  cd ~/Developer/inference-engine && git checkout feature/model-loader
+  cd ~/Developer/inference-engine && git checkout integration
   ```
 
 ---
@@ -58,8 +58,8 @@
   - `src/transformer/transformer.cpp`, `include/inference_engine/transformer.hpp`
   - `tools/generate_golden_reference.py`
   - `tests/test_kernels_scalar.cpp`, `tests/test_kv_cache.cpp`, `tests/test_golden_forward.cpp`
-- **Already Done (M0):** Scalar `rmsnorm_f32`, `rope_inplace_f32`, `dot_f32`, `dot_q4_0_f32`, `matmul_f32`, `matmul_q4_0_f32`, `swiglu_f32`, `softmax_f32`; `KvCache` with explicit `append()` vs `commit_token()` separation; position indexing contract test (`0..11` -> `12`).
-- **Immediate Next Step (M1 — Issue `#3`):** Implement causal GQA (`32` Q heads, `4` KV heads, `head_dim = 64`), bind `.ie` weights in `TransformerEngine`, implement the full 22-layer forward pass in `src/transformer/transformer.cpp`, and build `tools/generate_golden_reference.py`.
+- **Completed (M0 & M1 Issue `#3` in commit `5115467`, merged to `integration`):** Scalar `rmsnorm_f32`, `rope_inplace_f32`, `dot_f32`, `dot_q4_0_f32`, `matmul_f32`, `matmul_q4_0_f32`, `swiglu_f32`, `softmax_f32`, and `gqa_attention_f32`; `KvCache` (`append` vs `commit_token`); 16-step `FP32` forward pass in `TransformerEngine::forward_token()`; and `"GOLD"` v1 fixture generator in `tools/generate_golden_reference.py`.
+- **Immediate Next Step:** Unify `TransformerEngine::init()` with `ModelLoader::bind_transformer_weights()` (`KI-010`), fix decode logit comparison in `test_offline_golden_fixture_if_present()` (`KI-011`), and run full 22-layer golden validation on the real `TinyLlama-1.1B-Chat-v1.0` checkpoint.
 - **Start Command:**
   ```bash
   git clone https://github.com/shreyaas5/inference-engine.git && cd inference-engine && git checkout feature/transformer

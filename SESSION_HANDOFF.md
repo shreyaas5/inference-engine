@@ -1,43 +1,45 @@
 # `SESSION_HANDOFF.md` — Immediate Continuation Instructions
 
-**Last Updated:** 2026-10-31T18:25:00+05:30  
-**Last Session Role:** Member S (Project Lead & Model Loader — Issue `#1` Implementation on `feature/model-loader`)
+**Last Updated:** 2026-10-31T18:46:00+05:30  
+**Last Session Role:** Senior C++ Systems Engineer & Code Reviewer (Review & Integration of Member U's `feature/transformer` into `integration`)
 
 ---
 
-## 1. What We Did in This Session (Session 003)
+## 1. What We Did in This Session (Session 004)
 
-1. **Cleaned Working Tree & Committed Context-Transfer System (`60b103e`):**
-   - Identified the 52 tracked files that had a 1-line EOF newline diff vs the 2 tracked files (`CURRENT_STATUS.md`, `docs/DECISION_LOG.md`) and 14 untracked context files with legitimate documentation updates.
-   - Switched to `feature/model-loader`, discarded only the 52 EOF newline diffs, and committed the context-transfer documentation in commit `60b103e`.
-2. **Inspected the Real `TinyLlama/TinyLlama-1.1B-Chat-v1.0` Checkpoint Header & Config:**
-   - Fetched `config.json` and the 23,088-byte `model.safetensors` header via HTTP Range (`python3 tools/inspect_checkpoint.py --inspect-remote-hf`).
-   - Verified all **201** tensors (`3 + 9 * 22`: `lm_head.weight`, `model.embed_tokens.weight`, `model.norm.weight`, and 9 tensors per layer across layers `0..21`), all stored in `BF16` (`2,200,096,768` bytes total payload, `tie_word_embeddings: false`).
-3. **Implemented Issue `#1` (Safetensors-to-`.ie` FP32 Converter & Tensor Binding Validation):**
-   - Updated [`include/inference_engine/loader.hpp`](include/inference_engine/loader.hpp) and [`src/loader/loader.cpp`](src/loader/loader.cpp) with `LayerWeightBindings`, `TransformerWeightBindings`, `ModelLoader::validate_tensor_binding()`, and `ModelLoader::bind_transformer_weights()`, plus stricter header checks (rejecting `NaN`/`Inf` floats and trailing unreferenced bytes after the final payload).
-   - Implemented full `.safetensors` inspection and `.ie` v1 inspection in [`tools/inspect_checkpoint.py`](tools/inspect_checkpoint.py) (`--checkpoint-dir`, `--ie-file`, `--inspect-remote-hf`).
-   - Implemented two-pass streaming `BF16/F16/F32 -> FP32` `.safetensors` to `.ie` v1 conversion in [`tools/convert_to_inference_engine.py`](tools/convert_to_inference_engine.py) (`convert_safetensors_to_ie_fp32`), preserving exact tensor ordering and dimensions while streaming in 4 MiB chunks.
-   - Expanded [`tests/test_loader_validation.cpp`](tests/test_loader_validation.cpp) with 12 malformed-file rejection tests and a full 21-tensor (`num_layers = 2`) `mmap` file reload, `bind_transformer_weights()`, and bit-exact `FP32` data preservation test.
+1. **Fetched Remote Branches & Audited U's Transformer Implementation (`5115467`):**
+   - Fetched `origin/feature/transformer` (and duplicate remote branch `origin/feature/transformer-m1-fp32`), both pointing to commit `5115467` (`feat(transformer): implement M1 FP32 scalar inference and validation suite`, authored by Utkarsh Gupta).
+   - Audited all 7 changed files (`include/inference_engine/kernels.hpp`, `include/inference_engine/transformer.hpp`, `src/kernels/scalar/kernels_scalar.cpp`, `src/transformer/transformer.cpp`, `tests/test_kernels_scalar.cpp`, `tests/test_golden_forward.cpp`, `tools/generate_golden_reference.py`) line-by-line against the 16-step TinyLlama architecture, `KvCache` commit invariant, and autoregressive position indexing contract.
+2. **Merged `feature/model-loader` (`aa40368`) and `feature/transformer` (`5115467`) into `integration`:**
+   - Fast-forwarded `integration` from `cb85411` to `feature/model-loader` (`aa40368`, preserving the context-transfer documentation `60b103e` and S's `.safetensors -> .ie` loader/converter).
+   - Merged `feature/transformer` (`5115467`) into `integration` using a normal merge commit (`1f4e2a9`, zero conflicts).
+3. **Verified Build, Unit Tests, and Cross-Language Independent NumPy Golden Parity:**
+   - Built `integration` in `Release` mode with zero compiler warnings and passed all **7 / 7** CTest suites.
+   - Executed an independent cross-language end-to-end test: generated a 2-layer `BF16` `.safetensors` model, converted it to `.ie` `FP32` via S's `tools/convert_to_inference_engine.py`, computed reference multi-token logits and greedy continuation tokens using an independent Python NumPy `FP32` implementation, and verified C++ `TransformerEngine` via `test_offline_golden_fixture_if_present()` (`max_diff = 6.55651e-07` across prompt and 4 decode steps).
 
 ---
 
-## 2. What Is Currently Working (Verified)
+## 2. What Is Currently Working on `integration` (Verified)
 
-- **Branch:** `feature/model-loader` (local commits not yet pushed to `origin`, per user instruction).
-- **CMake Build:** Zero warnings on AppleClang 17.0.0 (`Release`).
-- **CTest:** **7 / 7 suites passing** (`loader_validation`, `quant_packing`, `kernels_scalar`, `kernels_simd`, `kv_cache`, `tokenizer`, `golden_forward`).
-- **Cross-Language Conversion & Reload Verification:**
-  - `python3 tools/convert_to_inference_engine.py --self-test` converts a 21-tensor `BF16` `.safetensors` checkpoint into `.ie` v1 and verifies bit-exact `FP32` values.
-  - `INFERENCE_ENGINE_TEST_IE_PATH=<converted.ie> ./build/inference_engine_tests --suite loader_validation` reloads the Python-generated `.ie` file via C++ `mmap` and binds all 21 tensors via `bind_transformer_weights()`.
+- **Branch:** `integration` (contains both S's `feature/model-loader` `aa40368` and U's `feature/transformer` `5115467`; local only, nothing pushed to `origin` without permission).
+- **S's Model Loader & Streaming `.safetensors -> .ie` Converter:** `TESTED` & `REFERENCE VERIFIED` (against live 201-tensor HF header).
+- **U's Scalar `FP32` Transformer Forward Pass (`TransformerEngine::init`, `TransformerEngine::forward_token`, `scalar::gqa_attention_f32`):**
+  - **Implemented & Unit-Tested:** All 16 forward-pass steps, `KvCache` commit invariant (`append` per layer without advancing `seq_len()`, `commit_token()` once after all layers finish), and autoregressive position indexing (`0..N-1` prefill $\rightarrow$ `N, N+1, ...` decode).
+  - **Validated with Synthetic Weights & Independent Python NumPy Reference:** `max_diff = 6.55651e-07`.
+  - **Not Yet Validated with Real TinyLlama Checkpoint Payload:** Full 2.20 GB `model.safetensors` weight file has not been converted/tested locally yet.
 
 ---
 
-## 3. What Remains Stubbed / Next Tasks
+## 3. What Remains Stubbed / Open Follow-Ups
 
-- `src/transformer/transformer.cpp` (`TransformerEngine::forward_token`): Still an M0 stub (Owner: **U**, Issue `#3`). Now ready to call `loader->bind_transformer_weights(&bindings)`!
-- `src/kernels/scalar/kernels_scalar.cpp`: Needs causal Grouped Query Attention (`GQA`) kernel (Owner: **U**, Issue `#3`).
-- `src/tokenizer/tokenizer.cpp`: Still uses M0 `byte + 3` fallback until SentencePiece C++ is linked (Owner: **P**, Issue `#4`).
-- `src/kernels/neon/kernels_neon.cpp` & `src/kernels/avx2/kernels_avx2.cpp`: `dot_q4_0_f32` still delegates to `scalar::dot_q4_0_f32` (Owner: **I**, Milestone M3).
+- **Real TinyLlama-1.1B Checkpoint Conversion & PyTorch Golden Validation (Owners: S & U):**
+  - Requires downloading the 2.20 GB `model.safetensors` file locally, converting to `models/tinyllama-1.1b-fp32.ie`, generating `fixtures/golden/golden_reference.bin` via `tools/generate_golden_reference.py`, and running `./build/inference_engine_tests --suite golden_forward`.
+- **Review Follow-Ups (`KI-010`, `KI-011`, `KI-012`):**
+  - `KI-010`: Refactor `TransformerEngine::init()` to delegate tensor binding to `ModelLoader::bind_transformer_weights()` and verify `config` matches `loader->config()`.
+  - `KI-011`: Update `tools/generate_golden_reference.py` and `test_offline_golden_fixture_if_present()` to record/compare post-step decode logits at every step and export layer-0/11/21 activations.
+  - `KI-012`: Wire `dispatch_matmul_f32` and `ThreadPool` into `TransformerEngine::forward_token()` in M3.
+- **SentencePiece C++ Tokenizer (`src/tokenizer/tokenizer.cpp`) & CLI Generation (`src/app/main.cpp` — Owner: P, Issue `#4`):**
+  - Still using the M0 `byte + 3` tokenizer stub and `--help`/`--info` CLI stub.
 
 ---
 
@@ -47,18 +49,9 @@
    ```bash
    cd ~/Developer/inference-engine
    git status
-   git log -n 3 --oneline --decorate
+   git log --oneline --decorate --graph -n 8
    ```
-2. **If Continuing on `feature/model-loader` (Member S):**
-   - Push `feature/model-loader` to `origin` when approved (`git push origin feature/model-loader`), or open a PR to `integration`.
-   - Download `TinyLlama-1.1B-Chat-v1.0` `model.safetensors` (2.20 GB) into `models/TinyLlama-1.1B-Chat-v1.0/` and run:
-     ```bash
-     python3 tools/convert_to_inference_engine.py \
-       --input-dir models/TinyLlama-1.1B-Chat-v1.0 \
-       --output models/tinyllama-1.1b-fp32.ie \
-       --dtype fp32
-     python3 tools/inspect_checkpoint.py --ie-file models/tinyllama-1.1b-fp32.ie
-     ```
-3. **If Switching to Member U (`feature/transformer` — Issue `#3`, Next Critical Path for M1):**
-   - Merge or cherry-pick `feature/model-loader` into `feature/transformer` (or merge `feature/model-loader` into `integration` first after review) so `TransformerWeightBindings` and `ModelLoader::bind_transformer_weights()` are available.
-   - Implement causal GQA attention and the 22-layer `FP32` forward pass in `src/transformer/transformer.cpp`.
+2. **If Switching to Member P (`feature/runtime-tokenizer` — Issue `#4`):**
+   - Merge `integration` into `feature/runtime-tokenizer`, link SentencePiece C++ in `CMakeLists.txt` and `src/tokenizer/tokenizer.cpp`, verify parity with `tools/verify_tokenizer_parity.py`, and wire the CLI generation loop in `src/app/main.cpp`.
+3. **If Running Full TinyLlama Golden Validation on `integration` (Members S & U — Issues `#1` & `#3`):**
+   - Download `TinyLlama/TinyLlama-1.1B-Chat-v1.0` locally, convert to `fixtures/golden/model.ie` (`--dtype fp32`), run `tools/generate_golden_reference.py --output-dir fixtures/golden`, and run `./build/inference_engine_tests --suite golden_forward`.

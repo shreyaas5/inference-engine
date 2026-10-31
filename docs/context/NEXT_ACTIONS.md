@@ -1,45 +1,41 @@
 # `NEXT_ACTIONS.md` — Dependency-Ordered Engineering Backlog
 
-**Last Updated:** 2026-10-31T18:25:00+05:30  
-**Current Phase:** Milestone M1 (`m1-fp32`) — Priority 0 & Priority 1 Completed on `feature/model-loader`
+**Last Updated:** 2026-10-31T18:46:00+05:30  
+**Current Phase:** Milestone M1 (`m1-fp32`) — Priorities 0, 1, 2 & 4 Merged into `integration` (Synthetic Validation Complete; Real Checkpoint & Tokenizer Pending)
 
 ---
 
-## Priority 0 — Immediate Repository Hygiene (Before Writing M1 Code)
+## Priority 0 — Immediate Repository Hygiene (Completed)
 
 - [x] **0.1 Commit Context-Transfer System & Clean Working Tree:**
-  - *Completed in commit `60b103e` on `feature/model-loader` (restored the 52 EOF-only diffs and committed all 16 context-transfer documentation files).*
-- [x] **0.2 Check Out Target Feature Branch:**
-  - *Completed: active branch is `feature/model-loader`.*
+  - *Completed in commit `60b103e` on `feature/model-loader`.*
+- [x] **0.2 Merge `feature/model-loader` (`aa40368`) and `feature/transformer` (`5115467`) into `integration`:**
+  - *Completed in merge commit `1f4e2a9` on `integration`.*
 
 ---
 
 ## Priority 1 — FP32 Checkpoint Inspection, Conversion & Loading (Owner: S, Issue `#1`)
 
-- [x] **1.1 Zero-Dependency & NumPy-Accelerated Python Converter Setup:**
-  - *Completed: `tools/inspect_checkpoint.py` and `tools/convert_to_inference_engine.py` run on both standard Python 3 and Conda `numpy` without requiring heavy third-party packages.*
-- [x] **1.2 Complete `tools/inspect_checkpoint.py` & Verify Real TinyLlama Tensor Inventory:**
-  - *Completed: verified all `201` tensors (`3 + 9 * 22`, `BF16`, `2,200,096,768` payload bytes) and `config.json` from `TinyLlama/TinyLlama-1.1B-Chat-v1.0` via `--inspect-remote-hf`.*
-- [x] **1.3 Implement Streaming `FP32` Conversion (`tools/convert_to_inference_engine.py`) & C++ Tensor Binding (`ModelLoader::bind_transformer_weights`):**
-  - *Completed: implemented two-pass streaming `BF16 -> FP32` conversion to 64-byte aligned `.ie` v1 files, added `TransformerWeightBindings` and `ModelLoader::bind_transformer_weights()`, and verified end-to-end Python conversion -> C++ `mmap` reload and bit-exact `FP32` preservation in `tests/test_loader_validation.cpp`.*
+- [x] **1.1 Zero-Dependency & NumPy-Accelerated Python Converter Setup.**
+- [x] **1.2 Complete `tools/inspect_checkpoint.py` & Verify Real TinyLlama Tensor Inventory (`201/201` tensors verified via `--inspect-remote-hf`).**
+- [x] **1.3 Implement Streaming `FP32` Conversion (`tools/convert_to_inference_engine.py`) & C++ Tensor Binding (`ModelLoader::bind_transformer_weights`).**
+- [ ] **1.4 Download Real 2.20 GB `model.safetensors` Payload & Convert Full 4.40 GB `tinyllama-1.1b-fp32.ie`:**
+  - Run `convert_to_inference_engine.py` on the real `TinyLlama-1.1B-Chat-v1.0` checkpoint and verify `mmap` reload with `INFERENCE_ENGINE_TEST_IE_PATH`.
 
 ---
 
-## Priority 2 — Scalar FP32 Kernels & KV Cache Correctness (Owner: U, Issue `#3`)
+## Priority 2 — Scalar FP32 Kernels & KV Cache Correctness (Owner: U, Issue `#3` — Completed)
 
-- [x] **2.1 Core Scalar Operations (`rmsnorm_f32`, `rope_inplace_f32`, `matmul_f32`, `swiglu_f32`, `softmax_f32`):**
-  - *Completed & tested in M0 (`src/kernels/scalar/kernels_scalar.cpp`, `tests/test_kernels_scalar.cpp`).*
-- [x] **2.2 KV Cache Storage & Explicit Commit (`KvCache::append` vs `KvCache::commit_token`):**
-  - *Completed & tested in M0 (`src/core/kv_cache.cpp`, `tests/test_kv_cache.cpp`).*
-- [ ] **2.3 Implement Causal Grouped Query Attention (GQA) Kernel:**
-  - Implement `scalar::gqa_attention_f32` in `src/kernels/scalar/kernels_scalar.cpp` (and declare in `include/inference_engine/kernels.hpp`) supporting `32` query heads, `4` KV heads (`8` Q heads per KV head), `head_dim = 64`, scale $1/\sqrt{64} = 0.125$, causal masking over `0..pos`, and unit-test it in `tests/test_kernels_scalar.cpp`.
+- [x] **2.1 Core Scalar Operations (`rmsnorm_f32`, `rope_inplace_f32`, `matmul_f32`, `swiglu_f32`, `softmax_f32`).**
+- [x] **2.2 KV Cache Storage & Explicit Commit (`KvCache::append` vs `KvCache::commit_token`).**
+- [x] **2.3 Implement Causal Grouped Query Attention (GQA) Kernel (`scalar::gqa_attention_f32`):**
+  - *Completed in commit `5115467` and verified in `tests/test_kernels_scalar.cpp` and `tests/test_golden_forward.cpp`.*
 
 ---
 
-## Priority 3 — Tokenizer Parity & SentencePiece Integration (Owner: P, Issue `#4`)
+## Priority 3 — Tokenizer Parity & SentencePiece Integration (Owner: P, Issue `#4` — Next Active Blocker)
 
-- [x] **3.1 TinyLlama Zephyr Chat Template (`Tokenizer::format_chat_prompt`):**
-  - *Completed & tested in M0 (`src/tokenizer/tokenizer.cpp`, `tests/test_tokenizer.cpp`).*
+- [x] **3.1 TinyLlama Zephyr Chat Template (`Tokenizer::format_chat_prompt`).**
 - [ ] **3.2 Link SentencePiece C++ in `CMakeLists.txt` & `src/tokenizer/tokenizer.cpp`:**
   - Install/discover `sentencepiece` C++ library (`find_package` / `pkg-config` / Homebrew `/opt/homebrew`), replace the M0 `byte + 3` fallback in `Tokenizer::encode()` and `Tokenizer::decode()` with `sentencepiece::SentencePieceProcessor`, and keep unit tests green.
 - [ ] **3.3 Verify Exact Tokenizer Parity (`tools/verify_tokenizer_parity.py`):**
@@ -47,31 +43,31 @@
 
 ---
 
-## Priority 4 — Full 22-Layer TinyLlama Forward Pass (Owner: U, Issue `#3`)
+## Priority 4 — Full Multi-Layer TinyLlama Forward Pass (Owner: U, Issue `#3`)
 
-- [ ] **4.1 Call `ModelLoader::bind_transformer_weights()` in `TransformerEngine::init()`:**
-  - Use the new `TransformerWeightBindings` API from `include/inference_engine/loader.hpp` to bind `embed_tokens`, all 22 layers' 9 tensors, `final_norm`, and `lm_head`.
-- [ ] **4.2 Implement Pre-Allocated Activation Workspace & `TransformerEngine::forward_token()`:**
-  - Allocate reusable `FP32` activation buffers in `init()` (zero heap allocations during `forward_token()`) and implement the full 22-layer forward pass in `src/transformer/transformer.cpp`.
-- [ ] **4.3 Synthetic Small-Model End-to-End Test:**
-  - Construct a tiny 2-layer synthetic `.ie` model in `tests/test_golden_forward.cpp` with known non-zero weights and verify deterministic non-zero logit output in CI without requiring the 4.4 GB checkpoint.
-
----
-
-## Priority 5 — Hugging Face Golden Reference Comparison (Owners: U & S, Issue `#3`)
-
-- [ ] **5.1 Implement `tools/generate_golden_reference.py`:**
-  - Load `TinyLlama-1.1B-Chat-v1.0` in `torch.float32`, run a 12-token prompt (`pos = 0..11`) plus greedy continuation (`pos = 12..27`), and export layer-0/11/21 activations, final logits, and greedy token IDs.
-- [ ] **5.2 Verify Multi-Token & Greedy Continuation Parity:**
-  - Confirm RoPE pairing convention (`KI-006`), calibrate empirical FP32 tolerances across all 22 layers, and verify exact greedy token sequence parity.
+- [x] **4.1 Implement Pre-Allocated Activation Workspace & `TransformerEngine::forward_token()`:**
+  - *Completed in commit `5115467` (`src/transformer/transformer.cpp`).*
+- [x] **4.2 Synthetic Small-Model End-to-End & Independent NumPy Reference Test:**
+  - *Completed in `tests/test_golden_forward.cpp` and verified against an independent Python NumPy `FP32` reference (`max_diff = 6.55651e-07` across prompt + 4 decode steps).*
+- [ ] **4.3 Unify `TransformerEngine::init()` Tensor Binding with `ModelLoader::bind_transformer_weights()` (`KI-010`):**
+  - Replace the file-local `bind_tensor()` / `const float*` `LayerWeights` in `TransformerEngine` with `TransformerWeightBindings` (`TensorView`) so full tensor-count validation and M2 `Q4_0` weights are supported without duplication.
 
 ---
 
-## Priority 6 — `Q4_0` Conversion & Mixed-Precision Validation (Owners: I & S, Issue `#2`)
+## Priority 5 — Real Hugging Face Golden Reference Comparison (Owners: U & S, Issue `#3`)
+
+- [x] **5.1 Implement `tools/generate_golden_reference.py` Binary Fixture Packer & Runner (`5115467`).**
+- [ ] **5.2 Fix Per-Step Decode Logit Indexing & Compare `gen_ref_logits` in `test_golden_forward.cpp` (`KI-011`).**
+- [ ] **5.3 Execute Full 22-Layer Golden Validation Against Real `TinyLlama-1.1B-Chat-v1.0` Weights:**
+  - Generate `fixtures/golden/golden_reference.bin` and `fixtures/golden/model.ie` from the real checkpoint, confirm RoPE pairing convention (`KI-006`), and verify multi-token logit + greedy decode parity in `golden_forward`.
+
+---
+
+## Priority 6 — `Q4_0` Conversion & Mixed-Precision Validation (Owners: I & S, Issue `#2`, Milestone M2)
 
 - [ ] **6.1 Cross-Check `quantize_row_q4_0` Against Independent Reference (`KI-007`).**
-- [ ] **6.2 Add `--dtype q4_0` Export to `tools/convert_to_inference_engine.py`** (keeping 1D `layernorm` weights in `FP32` and quantising 2D weights to `Q4_0`).
-- [ ] **6.3 Enable Mixed-Precision (`FP32` + `Q4_0`) Dispatch in `TransformerEngine::forward_token()`** and measure `Q4_0` vs `FP32` logit RMSE/cosine similarity.
+- [ ] **6.2 Add `--dtype q4_0` Export to `tools/convert_to_inference_engine.py`.**
+- [ ] **6.3 Enable Mixed-Precision (`FP32` + `Q4_0`) Dispatch in `TransformerEngine::forward_token()`.**
 
 ---
 
@@ -79,7 +75,7 @@
 
 - [ ] **7.1 Implement Vectorized `neon::dot_q4_0_f32` (`src/kernels/neon/kernels_neon.cpp`).**
 - [ ] **7.2 Implement Vectorized `avx2::dot_q4_0_f32` (`src/kernels/avx2/kernels_avx2.cpp`).**
-- [ ] **7.3 Wire `ThreadPool` into `TransformerEngine` Projections & Profile Thread Scaling (`1, 2, 4, 8` threads).**
+- [ ] **7.3 Wire `dispatch_matmul_*` & `ThreadPool` into `TransformerEngine::forward_token()` (`KI-012`).**
 
 ---
 

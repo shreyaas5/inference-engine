@@ -65,3 +65,24 @@
   - `python3 tools/convert_to_inference_engine.py --self-test` + C++ `INFERENCE_ENGINE_TEST_IE_PATH` reload: Verified end-to-end streaming `.safetensors -> .ie` conversion and C++ `mmap` binding across 21 tensors (`363,840` bytes).
 - **Remaining Work:**
   - Offline download of the full 2.20 GB `model.safetensors` file to generate the 4.40 GB `tinyllama-1.1b-fp32.ie` artifact locally; Member U's Issue `#3` (causal GQA + 22-layer forward pass) and Member P's Issue `#4` (SentencePiece C++ link).
+
+
+---
+
+## Session 004 — 2026-10-31 (18:39–18:47 IST)
+- **Engineer / Agent:** S (`shreyaas5`) + Antigravity (Senior C++ Systems Engineer & Code Reviewer)
+- **Objective:** Independently review Member U's `feature/transformer` implementation (`5115467`), validate its mathematical and architectural correctness against the 16-step TinyLlama contract, verify compatibility with S's `feature/model-loader` (`aa40368`), merge into `integration`, and update project context documentation.
+- **Branch & Commit Reviewed:**
+  - Remote branches `origin/feature/transformer` and `origin/feature/transformer-m1-fp32` at commit `5115467` (`feat(transformer): implement M1 FP32 scalar inference and validation suite`, authored by Utkarsh Gupta).
+- **Review Findings:**
+  - **Verified (`0` Blockers):** All 16 forward-pass steps (`embed_tokens`, `input_layernorm`, `q/k/v_proj`, `rope_inplace_f32` on Q & K only, `KvCache::append` without advancing `seq_len()`, `gqa_attention_f32` with $8:1$ group ratio and $1/\sqrt{d_{\text{head}}}$ scaling, `softmax_f32`, value aggregation, `o_proj` + residual, `post_attention_layernorm`, `gate/up_proj`, `swiglu_f32`, `down_proj` + residual, `KvCache::commit_token` once after all layers, `final_norm`, `lm_head`).
+  - **Warnings Recorded for Follow-Up:**
+    - `KI-010`: `TransformerEngine::init()` uses a file-local `bind_tensor()` helper and `const float*` `LayerWeights` rather than `ModelLoader::bind_transformer_weights(TransformerWeightBindings*)`. Compatible in M1 `FP32`, unify before M2 (`Q4_0`).
+    - `KI-011`: `test_synthetic_model_parity_and_non_zero_logits` compares against an inline C++ function calling the same `scalar::*` kernels, and `generate_golden_reference.py` / `test_offline_golden_fixture_if_present` do not compare per-step decode logits (`gen_ref_logits`).
+    - `KI-012`: `TransformerEngine::forward_token()` calls `scalar::matmul_f32` directly and ignores `backend_` and `num_threads` (expected for M1 scalar baseline; wire in M3).
+- **Merge & Independent Verification Executed:**
+  - Merged `feature/model-loader` (`aa40368`) and `feature/transformer` (`5115467`) into local `integration` (merge commit `1f4e2a9`, zero conflicts).
+  - Built `integration` in `Release` mode (`0` warnings) and ran all `7/7` CTest suites (**PASS**).
+  - Executed an independent Python NumPy `FP32` golden verification across S's `.safetensors (BF16) -> .ie (FP32)` converter + C++ `ModelLoader` (`mmap`) + U's `TransformerEngine::forward_token` across a 5-token prompt + 4 greedy decode steps: **PASS** (`max_diff = 6.55651e-07`).
+- **Remaining Work:**
+  - Download the real 2.20 GB `TinyLlama-1.1B-Chat-v1.0` checkpoint locally to run full 22-layer `.ie` conversion and PyTorch golden reference validation; link SentencePiece C++ in `Tokenizer` (Issue `#4`).
