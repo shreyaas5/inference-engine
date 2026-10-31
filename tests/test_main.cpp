@@ -11,6 +11,7 @@ bool run_kernels_scalar_tests();
 bool run_kernels_simd_tests();
 bool run_kv_cache_tests();
 bool run_tokenizer_tests();
+bool run_sampler_tests();
 bool run_golden_forward_tests();
 
 }  // namespace inference_engine::testing
@@ -30,6 +31,7 @@ int main(int argc, char** argv) {
         {"kernels_simd", run_kernels_simd_tests},
         {"kv_cache", run_kv_cache_tests},
         {"tokenizer", run_tokenizer_tests},
+        {"sampler", run_sampler_tests},
         {"golden_forward", run_golden_forward_tests},
     };
 

@@ -73,7 +73,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON
 # 2. Build core static library, CLI binary, and unit test runner
 cmake --build build --parallel 4
 
-# 3. Run all 7 CTest unit test suites
+# 3. Run all 8 CTest unit test suites
 ctest --test-dir build --output-on-failure
 
 # 4. Run a single CTest suite directly
@@ -110,8 +110,8 @@ python3 tools/verify_tokenizer_parity.py --self-test
 ## 7. What Must Never Be Assumed or Claimed
 
 1. **Never claim a module is complete merely because its `.cpp` file exists or compiles.** Check [`docs/context/IMPLEMENTATION_STATUS.md`](docs/context/IMPLEMENTATION_STATUS.md) and read the source file.
-2. **Never claim end-to-end TinyLlama inference works** until a real converted `.ie` checkpoint is loaded and `TransformerEngine::forward_token()` executes all 22 layers against real weights (currently `forward_token()` in [`src/transformer/transformer.cpp`](src/transformer/transformer.cpp) is an M0 stub that writes zero KV vectors and zero logits).
-3. **Never claim SentencePiece tokenization is active** until SentencePiece C++ is linked in `CMakeLists.txt` and `Tokenizer::encode()` in [`src/tokenizer/tokenizer.cpp`](src/tokenizer/tokenizer.cpp) replaces the M0 byte-offset fallback.
+2. **Never claim end-to-end TinyLlama inference works** until a real converted `.ie` checkpoint is loaded and `TransformerEngine::forward_token()` executes all 22 layers against real weights. The current FP32 forward pass has synthetic/NumPy validation only.
+3. **Never claim tokenizer parity is verified** until the C++ SentencePiece integration passes `tools/verify_tokenizer_parity.py` against the pinned TinyLlama tokenizer assets. Do not equate implementation with reference validation.
 4. **Never claim NEON/AVX2 `Q4_0` acceleration is active** until `neon::dot_q4_0_f32` and `avx2::dot_q4_0_f32` replace their current delegation to `scalar::dot_q4_0_f32`.
 5. **Never fabricate or estimate benchmark numbers, tolerances, or collaborator GitHub usernames.**
 
@@ -128,4 +128,3 @@ Before ending any session that modifies code, tests, build configuration, or des
 5. [`docs/context/NEXT_ACTIONS.md`](docs/context/NEXT_ACTIONS.md) — Check off completed items and reprioritize.
 6. [`docs/context/SESSION_LOG.md`](docs/context/SESSION_LOG.md) — Append a dated session entry summarizing objective, files touched, tests run, and remaining work.
 7. [`DECISIONS.md`](DECISIONS.md) — Record any new or updated architectural decision (`ADR-XXX`).
-

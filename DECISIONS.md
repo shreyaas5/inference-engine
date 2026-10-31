@@ -92,9 +92,73 @@
 ## ADR-007: SentencePiece C++ Integration for Tokenization
 
 - **Date:** 2026-10-31
-- **Status:** Accepted (Pending M1 Implementation)
+- **Status:** Accepted (implemented in working tree; build/parity validation pending)
 - **Context:** TinyLlama uses a 32,000-token SentencePiece model (`tokenizer.model`) with byte fallback and Zephyr chat tags.
 - **Decision:** Integrate the upstream SentencePiece C++ processor in `src/tokenizer/tokenizer.cpp` for M1 rather than writing a custom BPE/Unigram parser from scratch, and verify 100% token ID parity against Hugging Face using `tools/verify_tokenizer_parity.py`.
 - **Alternatives Considered:** Custom C++ BPE tokenizer parser. Rejected because SentencePiece whitespace normalization (`▁`) and byte-fallback rules are intricate and non-core to neural matrix-math execution.
-- **Consequences:** M0 uses a byte-offset stub (`byte + 3`) for synthetic unit tests; M1 Issue `#4` tracks linking `libsentencepiece`.
+- **Consequences:** `Tokenizer` uses the upstream C++ processor, validates the TinyLlama vocabulary (`32000`) and special-token IDs (`0/1/2`), and handles those special tokens separately from ordinary SentencePiece text. `tools/verify_tokenizer_parity.py` performs model-backed Hugging Face comparisons.
 
+---
+
+## ADR-008: Mixed-Precision `Q4_0` Model Export Policy and Unified `TensorView` Weight Bindings
+
+- **Date:** 2026-10-31
+- **Status:** Accepted
+- **Context:** Milestone M2 requires exporting and loading quantised `.ie` v1 models (`DataType::Q4_0`) while preserving 1D RMSNorm precision, maintaining backward compatibility with `FP32` `.ie` models, and eliminating duplicate tensor-binding logic between `ModelLoader` and `TransformerEngine` (`KI-010`).
+- **Decision:**
+  1. **Self-Describing Mixed-Precision `.ie` v1 Files:** Keep `.ie` format version `1` (`kIeFormatVersion = 1`). When exported with `--dtype q4_0`, the 64-byte header stores `weight_dtype = DataType::Q4_0` (`2`), while each tensor directory entry records its own `TensorDesc::dtype`:
+     - All 45 1D RMSNorm scale tensors (`*.input_layernorm.weight`, `*.post_attention_layernorm.weight`, `model.norm.weight`) are always stored as `DataType::FP32` (`368,640` bytes total).
+     - All 154 2D decoder layer projection matrices (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`) are stored as `DataType::Q4_0` (`544,997,376` bytes total).
+     - `model.embed_tokens.weight` and `lm_head.weight` (`[32000, 2048]`) default to `DataType::Q4_0` (`36,864,000` bytes each, yielding a `619,113,472`-byte / `619.11 MB` `.ie` file), with optional `--keep-embeddings-fp32` support (`DataType::FP32`, yielding a `1,069,673,472`-byte `.ie` file). `ModelLoader::bind_transformer_weights` validates and binds both variants seamlessly.
+  2. **Typed `TensorView` Accessors:** Extend `TensorView` (`include/inference_engine/tensor.hpp`) with `data_q4_0()` (`const BlockQ4_0*`), `data_f32()` (`const float*`), `dtype()`, `ndim()`, `shape()`, `payload_nbytes()`, `num_elements()`, and `num_blocks()`.
+  3. **Single Source of Truth for Weight Bindings (`KI-010` Resolved):** Refactor `TransformerEngine` (`include/inference_engine/transformer.hpp`, `src/transformer/transformer.cpp`) to store `TransformerWeightBindings bindings_{}` populated via `ModelLoader::bind_transformer_weights(&bindings_)`, removing private `LayerWeights` and duplicate `bind_tensor()` helpers.
+- **Alternatives Considered:** Incrementing `.ie` format version to `v2` (unnecessary because `.ie` v1 already stores per-tensor `TensorDesc::dtype` in the directory) or quantising 1D RMSNorm weights to `Q4_0` (rejected due to severe normalization scale distortion for `<300 KB` savings).
+- **Consequences:** Implemented and verified in `tools/convert_to_inference_engine.py`, `include/inference_engine/tensor.hpp`, `src/loader/loader.cpp`, `src/transformer/transformer.cpp`, and `tests/test_loader_validation.cpp`.
+
+---
+
+## ADR-009: Real TinyLlama Checkpoint Validation Protocol and Memory Architecture Constraints
+
+- **Date:** 2026-10-31
+- **Status:** Accepted
+- **Context:** Transitioning from synthetic validation to real `TinyLlama/TinyLlama-1.1B-Chat-v1.0` weights introduces network bandwidth constraints (~2.20 GB safetensors), storage considerations (8.29 GB for source and all target `.ie` formats), and strict zero-copy runtime contracts.
+- **Decision:**
+  1. **Two-Stage Validation Discipline:** Validate checkpoint metadata and tensor headers (23,088 bytes) and representative projection slices via HTTP Range and local file inspection without requiring a synchronous multi-gigabyte blocking download before verifying architecture and quantisation metrics.
+  2. **Dedicated CLI Error Inspection Tool:** Provide `--eval-real-quant-error` in `tools/inspect_checkpoint.py` to evaluate and log real-checkpoint `Q4_0` quantisation metrics (`MAE`, `RMSE`, `MaxAbsErr`, `RelL2`) across all 9 projection functional roles.
+  3. **Zero-Duplication Memory Architecture:**
+     - `ModelLoader::load_from_file` uses POSIX `mmap` (`PROT_READ`, `MAP_PRIVATE`) so weight pages are mapped directly into the OS page cache with zero memory duplication.
+     - `TensorView` instances are strictly non-owning views whose internal pointers are valid only during the lifetime of the backing `ModelLoader`. `ModelLoader` must strictly outlive `TransformerEngine`.
+     - `TransformerEngine` pre-allocates an activation workspace (~393 KB total) during `init()`, and performs zero dynamic heap allocations in `forward_token()`.
+- **Alternatives Considered:** Allocating owned heap buffers for all weights in C++ (rejected: doubles memory footprint and exceeds 8 GB RAM on commodity laptops) or ignoring real-weight quantisation metrics until full offline download completes (rejected: delays early discovery of numerical outliers).
+- **Consequences:** Documented and verified in `tools/inspect_checkpoint.py`, `src/loader/loader.cpp`, and `src/transformer/transformer.cpp`.
+
+---
+
+## ADR-010: Dynamic Task Chunking and Exception Propagation in Persistent ThreadPool
+
+- **Date:** 2026-10-31
+- **Status:** Accepted
+- **Context:**
+  1. In multi-threaded matrix-vector multiplication (`dispatch_matmul_*`), row counts can reach up to 32,000 (such as in `lm_head.weight` projection). Individual task-by-task mutex locking resulted in massive contention on high-core CPUs (e.g. AMD Ryzen 7 7745HX, 8C/16T).
+  2. If an exception occurred within a worker thread callback, standard `std::thread` workers would terminate the process abruptly (`std::terminate`), or leave worker threads in an indeterminate/deadlocked state.
+- **Decision:**
+  1. **Dynamic Task Chunking:** Compute dynamic chunk size as `std::max<size_t>(1, num_tasks / (num_threads * 4))`. This achieves optimal load balancing while eliminating over 95% of mutex acquisitions.
+  2. **Exception Safety & Propagation:** Private member `std::exception_ptr exception_ptr_{}` captures the first thrown exception in any worker or caller thread. Remaining work is halted gracefully, all worker threads are synchronized back to the idle state via `cv_done_`, and the exception is cleanly rethrown on the calling thread via `std::rethrow_exception`.
+- **Alternatives Considered:**
+  - Work-stealing queues (unnecessary architectural complexity for predictable parallel-for loops).
+  - OpenMP `#pragma omp parallel for` (rejected to maintain standard C++17 portability without compiler runtime dependencies).
+- **Consequences:** Implemented in `include/inference_engine/thread_pool.hpp` and `src/kernels/threading/thread_pool.cpp`. Validated via unit tests in `tests/test_kernels_simd.cpp` covering 1,000 rapid successive cycles and forced exception recovery.
+
+---
+
+## ADR-011: Reproducible SentencePiece Build Dependency
+
+- **Date:** 2026-10-31
+- **Status:** Accepted
+- **Context:** The tokenizer must use the upstream SentencePiece C++ implementation across supported build hosts without requiring a separately installed tokenizer library.
+- **Decision:**
+  - Prefer a system SentencePiece library only when pkg-config reports version `0.2.0` or newer.
+  - Otherwise fetch the upstream repository at commit `17d7580d6407802f85855d2cc9190634e2c95624` and build its static C++ library with optional tests/shared libraries/tcmalloc disabled.
+  - Keep the library out of the public tokenizer header through a forward-declared processor type.
+- **Alternatives Considered:** A custom tokenizer, relying only on Homebrew/apt installation instructions, or an unpinned latest upstream checkout. Rejected because these reduce compatibility, reproducibility, or ease of building.
+- **Consequences:** CI and developer builds can produce the same SentencePiece API implementation without committing tokenizer assets or vendor build outputs. Hugging Face tokenizer assets remain fetched only for verification and local inference.

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 project(inference-engine
     VERSION 0.1.0
     DESCRIPTION "Custom C++17 CPU inference engine for TinyLlama-1.1B-Chat-v1.0"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 set(CMAKE_CXX_STANDARD 17)
@@ -15,6 +15,28 @@ option(INFERENCE_ENGINE_BUILD_TESTS "Build inference-engine unit tests" ON)
 option(INFERENCE_ENGINE_ENABLE_AVX2 "Enable AVX2/FMA compilation on x86_64 targets" ON)
 
 find_package(Threads REQUIRED)
+
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(SENTENCEPIECE QUIET IMPORTED_TARGET sentencepiece>=0.2.0)
+endif()
+
+if(TARGET PkgConfig::SENTENCEPIECE)
+    set(INFERENCE_ENGINE_SENTENCEPIECE_TARGET PkgConfig::SENTENCEPIECE)
+else()
+    include(FetchContent)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+    set(SPM_BUILD_TEST OFF CACHE BOOL "" FORCE)
+    set(SPM_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+    set(SPM_ENABLE_TCMALLOC OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(sentencepiece
+        GIT_REPOSITORY https://github.com/google/sentencepiece.git
+        GIT_TAG 17d7580d6407802f85855d2cc9190634e2c95624
+        GIT_SHALLOW FALSE
+    )
+    FetchContent_MakeAvailable(sentencepiece)
+    set(INFERENCE_ENGINE_SENTENCEPIECE_TARGET sentencepiece-static)
+endif()
 
 set(INFERENCE_ENGINE_CORE_SOURCES
     src/common/common.cpp
@@ -43,7 +65,19 @@ target_include_directories(inference_engine_core
 target_link_libraries(inference_engine_core
     PUBLIC
         Threads::Threads
+    PRIVATE
+        ${INFERENCE_ENGINE_SENTENCEPIECE_TARGET}
 )
+
+if(NOT TARGET PkgConfig::SENTENCEPIECE)
+    target_include_directories(inference_engine_core SYSTEM PRIVATE
+        ${sentencepiece_SOURCE_DIR}/src
+        ${sentencepiece_SOURCE_DIR}/src/builtin_pb
+        ${sentencepiece_SOURCE_DIR}/third_party/protobuf-lite
+        ${sentencepiece_BINARY_DIR}/src
+        ${sentencepiece_BINARY_DIR}
+    )
+endif()
 
 if(MSVC)
     target_compile_options(inference_engine_core PRIVATE /W4)
@@ -62,6 +96,9 @@ endif()
 
 add_executable(inference-engine src/app/main.cpp)
 target_link_libraries(inference-engine PRIVATE inference_engine_core)
+if(WIN32)
+    target_link_libraries(inference-engine PRIVATE Psapi)
+endif()
 
 if(INFERENCE_ENGINE_BUILD_TESTS)
     enable_testing()
@@ -74,6 +111,7 @@ if(INFERENCE_ENGINE_BUILD_TESTS)
         tests/test_kernels_simd.cpp
         tests/test_kv_cache.cpp
         tests/test_tokenizer.cpp
+        tests/test_sampler.cpp
         tests/test_golden_forward.cpp
     )
 
@@ -92,6 +130,7 @@ if(INFERENCE_ENGINE_BUILD_TESTS)
         kernels_simd
         kv_cache
         tokenizer
+        sampler
         golden_forward
     )
 
@@ -101,4 +140,8 @@ if(INFERENCE_ENGINE_BUILD_TESTS)
             COMMAND inference_engine_tests --suite ${SUITE_NAME}
         )
     endforeach()
+
+    set_tests_properties(tokenizer PROPERTIES
+        ENVIRONMENT "INFERENCE_ENGINE_TOKENIZER_MODEL=${CMAKE_CURRENT_BINARY_DIR}/tokenizer/tokenizer.model"
+    )
 endif()

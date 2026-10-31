@@ -26,6 +26,18 @@ Every official benchmark run must record:
 7. **Effective Memory Bandwidth (GB/s):** Estimated from bytes of weights + KV cache read per decode token divided by mean token latency.
 8. **Thermal / Sustained Stability:** Comparison of decode tokens/sec across a 5-run cold/warm sequence to capture laptop thermal throttling behaviour.
 
+The CLI's `--benchmark` mode currently measures model-load time, prefill TTFT,
+prompt throughput, decode throughput, peak resident memory, and process CPU
+utilization when supported. Prompt throughput includes the encoded prompt
+(including BOS and any chat-template pieces). Decode throughput excludes the
+first generated token, which is sampled from the final prompt-position logits;
+the generated-token count includes EOS when EOS is sampled. A run with fewer
+than two generated tokens reports decode throughput as unavailable.
+
+`--threads` is accepted by the CLI, but the current FP32 `TransformerEngine`
+does not yet use the thread pool. It emits a warning for values above one;
+those runs must not be presented as thread-scaling results.
+
 ## 3. Baseline Comparison Against `llama.cpp`
 
 In Milestone M4, `inference-engine` is benchmarked head-to-head against `llama.cpp` (`llama-cli` / `llama-bench`) on all four laptops under identical conditions:

@@ -26,7 +26,7 @@ jobs:
             os: ubuntu-latest
             build_type: Release
           - name: macOS ARM64 (AppleClang / NEON)
-            os: macos-14
+            os: macos-latest
             build_type: Release
 
     steps:
@@ -42,6 +42,24 @@ jobs:
       - name: Build targets
         run: cmake --build build --config ${{ matrix.build_type }} --parallel 2
 
+      - name: Download pinned TinyLlama tokenizer assets
+        run: |
+          mkdir -p build/tokenizer
+          curl --fail --location --retry 3 \
+            https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/fe8a4ea1ffedaf415f4da2f062534de366a451e6/tokenizer.model \
+            --output build/tokenizer/tokenizer.model
+          curl --fail --location --retry 3 \
+            https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/fe8a4ea1ffedaf415f4da2f062534de366a451e6/tokenizer_config.json \
+            --output build/tokenizer/tokenizer_config.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Hugging Face tokenizer parity dependencies
+        run: python3 -m pip install transformers==4.46.3 sentencepiece==0.2.0 protobuf jinja2
+
       - name: Run deterministic CTest unit suites
         run: ctest --test-dir build --output-on-failure --build-config ${{ matrix.build_type }}
 
@@ -55,3 +73,7 @@ jobs:
           python3 tools/inspect_checkpoint.py --print-frozen-contract
           python3 tools/convert_to_inference_engine.py --self-test
           python3 tools/verify_tokenizer_parity.py --self-test
+          python3 tools/verify_tokenizer_parity.py \
+            --engine ./build/inference-engine \
+            --tokenizer-model build/tokenizer/tokenizer.model \
+            --tokenizer-config build/tokenizer/tokenizer_config.json

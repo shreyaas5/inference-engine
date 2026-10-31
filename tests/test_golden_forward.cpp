@@ -1,3 +1,4 @@
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -408,6 +409,295 @@ bool test_kv_cache_and_gqa_mapping() {
     return true;
 }
 
+SyntheticModel create_synthetic_model_64(DataType weight_dtype, bool keep_embeddings_fp32 = false) {
+    SyntheticModel sm;
+    sm.config.num_layers = 2;
+    sm.config.hidden_dim = 64;
+    sm.config.intermediate_dim = 128;
+    sm.config.num_query_heads = 4;
+    sm.config.num_kv_heads = 2;
+    sm.config.head_dim = 16;
+    sm.config.vocab_size = 64;
+    sm.config.max_seq_len = 32;
+    sm.config.rms_norm_eps = 1e-5f;
+    sm.config.rope_theta = 10000.0f;
+    sm.config.weight_dtype = weight_dtype;
+
+    const ModelConfig& cfg = sm.config;
+    std::vector<TensorDesc> descriptors;
+    std::vector<std::vector<uint8_t>> payloads;
+
+    auto gen_matrix = [](size_t n, float base, float factor) {
+        std::vector<float> v(n);
+        for (size_t i = 0; i < n; ++i) {
+            v[i] = std::sin(base + static_cast<float>(i + 1) * factor) * 0.05f;
+        }
+        return v;
+    };
+
+    auto gen_norm = [](size_t n, float base) {
+        std::vector<float> v(n);
+        for (size_t i = 0; i < n; ++i) {
+            v[i] = 1.0f + std::sin(base + static_cast<float>(i + 1) * 0.1f) * 0.02f;
+        }
+        return v;
+    };
+
+    auto add_f32 = [&](const std::string& name, uint32_t ndim, std::array<uint64_t, 4> shape, const std::vector<float>& data) {
+        TensorDesc desc{};
+        desc.name = name;
+        desc.dtype = DataType::FP32;
+        desc.ndim = ndim;
+        desc.shape = shape;
+        descriptors.push_back(desc);
+
+        std::vector<uint8_t> bytes(data.size() * sizeof(float));
+        std::memcpy(bytes.data(), data.data(), bytes.size());
+        payloads.push_back(std::move(bytes));
+    };
+
+    auto add_2d = [&](const std::string& name, uint64_t rows, uint64_t cols, const std::vector<float>& data, bool force_fp32 = false) {
+        if (weight_dtype == DataType::FP32 || force_fp32) {
+            add_f32(name, 2, {rows, cols, 0, 0}, data);
+        } else {
+            TensorDesc desc{};
+            desc.name = name;
+            desc.dtype = DataType::Q4_0;
+            desc.ndim = 2;
+            desc.shape = {rows, cols, 0, 0};
+            descriptors.push_back(desc);
+
+            std::vector<BlockQ4_0> blocks(data.size() / kQ4_0BlockElements);
+            quantize_row_q4_0(data.data(), blocks.data(), data.size());
+            std::vector<uint8_t> bytes(blocks.size() * sizeof(BlockQ4_0));
+            std::memcpy(bytes.data(), blocks.data(), bytes.size());
+            payloads.push_back(std::move(bytes));
+        }
+    };
+
+    sm.embed_weights = gen_matrix(static_cast<size_t>(cfg.vocab_size) * cfg.hidden_dim, 0.5f, 0.07f);
+    add_2d("model.embed_tokens.weight", cfg.vocab_size, cfg.hidden_dim, sm.embed_weights, keep_embeddings_fp32);
+
+    sm.layer_refs.resize(cfg.num_layers);
+    for (uint32_t l = 0; l < cfg.num_layers; ++l) {
+        const std::string prefix = "model.layers." + std::to_string(l) + ".";
+        auto& lr = sm.layer_refs[l];
+        const float l_offset = static_cast<float>(l) * 1.5f;
+
+        lr.input_norm = gen_norm(cfg.hidden_dim, 1.0f + l_offset);
+        add_f32(prefix + "input_layernorm.weight", 1, {cfg.hidden_dim, 0, 0, 0}, lr.input_norm);
+
+        lr.q_proj = gen_matrix(static_cast<size_t>(cfg.q_dim()) * cfg.hidden_dim, 2.0f + l_offset, 0.03f);
+        add_2d(prefix + "self_attn.q_proj.weight", cfg.q_dim(), cfg.hidden_dim, lr.q_proj);
+
+        lr.k_proj = gen_matrix(static_cast<size_t>(cfg.kv_dim()) * cfg.hidden_dim, 3.0f + l_offset, 0.04f);
+        add_2d(prefix + "self_attn.k_proj.weight", cfg.kv_dim(), cfg.hidden_dim, lr.k_proj);
+
+        lr.v_proj = gen_matrix(static_cast<size_t>(cfg.kv_dim()) * cfg.hidden_dim, 4.0f + l_offset, 0.05f);
+        add_2d(prefix + "self_attn.v_proj.weight", cfg.kv_dim(), cfg.hidden_dim, lr.v_proj);
+
+        lr.o_proj = gen_matrix(static_cast<size_t>(cfg.hidden_dim) * cfg.q_dim(), 5.0f + l_offset, 0.06f);
+        add_2d(prefix + "self_attn.o_proj.weight", cfg.hidden_dim, cfg.q_dim(), lr.o_proj);
+
+        lr.post_norm = gen_norm(cfg.hidden_dim, 6.0f + l_offset);
+        add_f32(prefix + "post_attention_layernorm.weight", 1, {cfg.hidden_dim, 0, 0, 0}, lr.post_norm);
+
+        lr.gate_proj = gen_matrix(static_cast<size_t>(cfg.intermediate_dim) * cfg.hidden_dim, 7.0f + l_offset, 0.02f);
+        add_2d(prefix + "mlp.gate_proj.weight", cfg.intermediate_dim, cfg.hidden_dim, lr.gate_proj);
+
+        lr.up_proj = gen_matrix(static_cast<size_t>(cfg.intermediate_dim) * cfg.hidden_dim, 8.0f + l_offset, 0.03f);
+        add_2d(prefix + "mlp.up_proj.weight", cfg.intermediate_dim, cfg.hidden_dim, lr.up_proj);
+
+        lr.down_proj = gen_matrix(static_cast<size_t>(cfg.hidden_dim) * cfg.intermediate_dim, 9.0f + l_offset, 0.04f);
+        add_2d(prefix + "mlp.down_proj.weight", cfg.hidden_dim, cfg.intermediate_dim, lr.down_proj);
+    }
+
+    sm.final_norm_weights = gen_norm(cfg.hidden_dim, 10.0f);
+    add_f32("model.norm.weight", 1, {cfg.hidden_dim, 0, 0, 0}, sm.final_norm_weights);
+
+    sm.lm_head_weights = gen_matrix(static_cast<size_t>(cfg.vocab_size) * cfg.hidden_dim, 11.0f, 0.015f);
+    add_2d("lm_head.weight", cfg.vocab_size, cfg.hidden_dim, sm.lm_head_weights, keep_embeddings_fp32);
+
+    Status bst = ModelLoader::build_ie_image(cfg, descriptors, payloads, &sm.ie_bytes);
+    if (!bst.ok()) {
+        std::cerr << "Failed to build synthetic .ie image: " << bst.message << "\n";
+    }
+    return sm;
+}
+
+bool test_q4_0_transformer_forward_and_numerical_metrics() {
+    std::cout << "[INFO] Running comprehensive Q4_0 Transformer forward pass and numerical validation...\n";
+
+    SyntheticModel sm_fp32 = create_synthetic_model_64(DataType::FP32);
+    SyntheticModel sm_q4_pure = create_synthetic_model_64(DataType::Q4_0, false);
+    SyntheticModel sm_q4_mixed = create_synthetic_model_64(DataType::Q4_0, true);
+
+    if (sm_fp32.ie_bytes.empty() || sm_q4_pure.ie_bytes.empty() || sm_q4_mixed.ie_bytes.empty()) {
+        std::cerr << "Failed to build synthetic models for Q4_0 testing\n";
+        return false;
+    }
+
+    ModelLoader loader_fp32;
+    if (!loader_fp32.load_from_buffer(sm_fp32.ie_bytes.data(), sm_fp32.ie_bytes.size()).ok()) return false;
+    ModelLoader loader_q4_pure;
+    if (!loader_q4_pure.load_from_buffer(sm_q4_pure.ie_bytes.data(), sm_q4_pure.ie_bytes.size()).ok()) return false;
+    ModelLoader loader_q4_mixed;
+    if (!loader_q4_mixed.load_from_buffer(sm_q4_mixed.ie_bytes.data(), sm_q4_mixed.ie_bytes.size()).ok()) return false;
+
+    TransformerEngine engine_fp32;
+    if (!engine_fp32.init(sm_fp32.config, &loader_fp32, SimdBackend::Scalar, 1).ok()) return false;
+
+    TransformerEngine engine_q4_scalar;
+    if (!engine_q4_scalar.init(sm_q4_pure.config, &loader_q4_pure, SimdBackend::Scalar, 1).ok()) return false;
+
+    const SimdBackend best_simd = detect_best_backend();
+    TransformerEngine engine_q4_simd;
+    if (!engine_q4_simd.init(sm_q4_pure.config, &loader_q4_pure, best_simd, 1).ok()) return false;
+
+    TransformerEngine engine_q4_mt;
+    if (!engine_q4_mt.init(sm_q4_pure.config, &loader_q4_pure, best_simd, 4).ok()) return false;
+
+    TransformerEngine engine_q4_mixed;
+    if (!engine_q4_mixed.init(sm_q4_mixed.config, &loader_q4_mixed, best_simd, 1).ok()) return false;
+
+    const std::vector<int32_t> prompt_tokens = {5, 11, 22, 33, 44};
+    const uint32_t prompt_len = static_cast<uint32_t>(prompt_tokens.size());
+    const uint32_t decode_steps = 4;
+    const uint32_t vocab_size = sm_fp32.config.vocab_size;
+
+    std::vector<float> logits_fp32(vocab_size, 0.0f);
+    std::vector<float> logits_q4_scalar(vocab_size, 0.0f);
+    std::vector<float> logits_q4_simd(vocab_size, 0.0f);
+    std::vector<float> logits_q4_mt(vocab_size, 0.0f);
+    std::vector<float> logits_q4_mixed(vocab_size, 0.0f);
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (uint32_t pos = 0; pos < prompt_len; ++pos) {
+        if (!engine_fp32.forward_token(prompt_tokens[pos], pos, logits_fp32.data()).ok()) return false;
+    }
+    auto t1 = std::chrono::high_resolution_clock::now();
+    for (uint32_t pos = 0; pos < prompt_len; ++pos) {
+        if (!engine_q4_scalar.forward_token(prompt_tokens[pos], pos, logits_q4_scalar.data()).ok()) return false;
+    }
+    auto t2 = std::chrono::high_resolution_clock::now();
+    for (uint32_t pos = 0; pos < prompt_len; ++pos) {
+        if (!engine_q4_simd.forward_token(prompt_tokens[pos], pos, logits_q4_simd.data()).ok()) return false;
+    }
+    auto t3 = std::chrono::high_resolution_clock::now();
+    for (uint32_t pos = 0; pos < prompt_len; ++pos) {
+        if (!engine_q4_mt.forward_token(prompt_tokens[pos], pos, logits_q4_mt.data()).ok()) return false;
+    }
+    auto t4 = std::chrono::high_resolution_clock::now();
+    for (uint32_t pos = 0; pos < prompt_len; ++pos) {
+        if (!engine_q4_mixed.forward_token(prompt_tokens[pos], pos, logits_q4_mixed.data()).ok()) return false;
+    }
+    auto t5 = std::chrono::high_resolution_clock::now();
+
+    const double time_fp32_prefill_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+    const double time_q4_scalar_prefill_us = std::chrono::duration<double, std::micro>(t2 - t1).count();
+    const double time_q4_simd_prefill_us = std::chrono::duration<double, std::micro>(t3 - t2).count();
+    const double time_q4_mt_prefill_us = std::chrono::duration<double, std::micro>(t4 - t3).count();
+    const double time_q4_mixed_prefill_us = std::chrono::duration<double, std::micro>(t5 - t4).count();
+
+    // Verify prompt prefill parity between Scalar and SIMD and MT Q4_0
+    for (uint32_t i = 0; i < vocab_size; ++i) {
+        if (std::fabs(logits_q4_scalar[i] - logits_q4_simd[i]) > 1e-4f) {
+            std::cerr << "Prefill Q4_0 Scalar vs SIMD divergence at " << i << "\n";
+            return false;
+        }
+        if (std::fabs(logits_q4_simd[i] - logits_q4_mt[i]) > 1e-4f) {
+            std::cerr << "Prefill Q4_0 SIMD vs MultiThread divergence at " << i << "\n";
+            return false;
+        }
+    }
+
+    auto compute_metrics = [&](const std::vector<float>& ref, const std::vector<float>& act) {
+        float max_err = 0.0f;
+        float sum_err = 0.0f;
+        float sum_sq = 0.0f;
+        for (uint32_t i = 0; i < vocab_size; ++i) {
+            const float diff = std::fabs(ref[i] - act[i]);
+            max_err = std::max(max_err, diff);
+            sum_err += diff;
+            sum_sq += diff * diff;
+        }
+        const float mae = sum_err / static_cast<float>(vocab_size);
+        const float rmse = std::sqrt(sum_sq / static_cast<float>(vocab_size));
+        const int32_t tok_ref = Sampler::sample_greedy(ref.data(), ref.size());
+        const int32_t tok_act = Sampler::sample_greedy(act.data(), act.size());
+        return std::make_tuple(max_err, mae, rmse, tok_ref == tok_act, tok_ref, tok_act);
+    };
+
+    auto [pre_max, pre_mae, pre_rmse, pre_match, pre_tok_fp, pre_tok_q4] =
+        compute_metrics(logits_fp32, logits_q4_simd);
+
+    std::cout << "[METRICS] Prompt Prefill (5 tokens) FP32 vs Q4_0 Pure: MaxErr=" << pre_max
+              << ", MAE=" << pre_mae << ", RMSE=" << pre_rmse
+              << ", GreedyAgreement=" << (pre_match ? "YES" : "NO")
+              << " (FP32 tok=" << pre_tok_fp << ", Q4_0 tok=" << pre_tok_q4 << ")\n";
+
+    if (pre_mae > 0.35f || pre_rmse > 0.45f) {
+        std::cerr << "Q4_0 prefill quantization error exceeded acceptable bounds\n";
+        return false;
+    }
+
+    int32_t curr_token_fp32 = pre_tok_fp;
+    int32_t curr_token_q4 = pre_tok_q4;
+
+    double decode_time_fp32 = 0.0;
+    double decode_time_q4_simd = 0.0;
+    double decode_time_q4_mt = 0.0;
+
+    for (uint32_t step = 0; step < decode_steps; ++step) {
+        const uint32_t decode_pos = prompt_len + step;
+
+        auto dt0 = std::chrono::high_resolution_clock::now();
+        if (!engine_fp32.forward_token(curr_token_fp32, decode_pos, logits_fp32.data()).ok()) return false;
+        auto dt1 = std::chrono::high_resolution_clock::now();
+        if (!engine_q4_scalar.forward_token(curr_token_q4, decode_pos, logits_q4_scalar.data()).ok()) return false;
+        auto dt2 = std::chrono::high_resolution_clock::now();
+        if (!engine_q4_simd.forward_token(curr_token_q4, decode_pos, logits_q4_simd.data()).ok()) return false;
+        auto dt3 = std::chrono::high_resolution_clock::now();
+        if (!engine_q4_mt.forward_token(curr_token_q4, decode_pos, logits_q4_mt.data()).ok()) return false;
+        auto dt4 = std::chrono::high_resolution_clock::now();
+
+        decode_time_fp32 += std::chrono::duration<double, std::micro>(dt1 - dt0).count();
+        decode_time_q4_simd += std::chrono::duration<double, std::micro>(dt3 - dt2).count();
+        decode_time_q4_mt += std::chrono::duration<double, std::micro>(dt4 - dt3).count();
+
+        for (uint32_t i = 0; i < vocab_size; ++i) {
+            if (std::fabs(logits_q4_scalar[i] - logits_q4_simd[i]) > 1e-4f) {
+                std::cerr << "Decode step " << step << " Q4_0 Scalar vs SIMD divergence\n";
+                return false;
+            }
+            if (std::fabs(logits_q4_simd[i] - logits_q4_mt[i]) > 1e-4f) {
+                std::cerr << "Decode step " << step << " Q4_0 SIMD vs MT divergence\n";
+                return false;
+            }
+        }
+
+        auto [d_max, d_mae, d_rmse, d_match, d_tok_fp, d_tok_q4] =
+            compute_metrics(logits_fp32, logits_q4_simd);
+
+        std::cout << "[METRICS] Decode Step " << step << " (pos " << decode_pos << "): MaxErr=" << d_max
+                  << ", MAE=" << d_mae << ", RMSE=" << d_rmse
+                  << ", GreedyAgreement=" << (d_match ? "YES" : "NO")
+                  << " (FP32=" << d_tok_fp << ", Q4=" << d_tok_q4 << ")\n";
+
+        curr_token_fp32 = d_tok_fp;
+        curr_token_q4 = d_tok_q4;
+    }
+
+    std::cout << "[BENCHMARK] Timing (Prefill 5 tokens / Decode 4 tokens):\n"
+              << "  - FP32 Scalar:        Prefill=" << time_fp32_prefill_us << " us, Decode=" << decode_time_fp32 << " us\n"
+              << "  - Q4_0 Scalar (1T):   Prefill=" << time_q4_scalar_prefill_us << " us\n"
+              << "  - Q4_0 SIMD (1T):     Prefill=" << time_q4_simd_prefill_us << " us, Decode=" << decode_time_q4_simd << " us\n"
+              << "  - Q4_0 SIMD (4T):     Prefill=" << time_q4_mt_prefill_us << " us, Decode=" << decode_time_q4_mt << " us\n"
+              << "  - Q4_0 Mixed (1T):    Prefill=" << time_q4_mixed_prefill_us << " us\n";
+
+    return true;
+}
+
 bool test_error_handling_contracts() {
     SyntheticModel sm = create_synthetic_model();
     ModelLoader loader;
@@ -474,10 +764,10 @@ bool test_error_handling_contracts() {
 
     // 7. Unsupported dtype in ModelConfig
     ModelConfig bad_dtype_cfg = sm.config;
-    bad_dtype_cfg.weight_dtype = DataType::Q4_0;
+    bad_dtype_cfg.weight_dtype = DataType::I32;
     TransformerEngine bad_dtype_engine;
     if (bad_dtype_engine.init(bad_dtype_cfg, &loader).ok()) {
-        std::cerr << "Expected engine.init to fail when weight_dtype != FP32 in M1\n";
+        std::cerr << "Expected engine.init to fail when weight_dtype is neither FP32 nor Q4_0\n";
         return false;
     }
 
@@ -575,6 +865,18 @@ bool test_offline_golden_fixture_if_present() {
             std::cerr << "Golden decode forward failed at step " << step << "\n";
             return false;
         }
+
+        // Verify logits after decode forward pass
+        float step_max_diff = 0.0f;
+        const float* ref_step_logits = &gen_ref_logits[static_cast<size_t>(step) * vocab_size];
+        for (uint32_t i = 0; i < vocab_size; ++i) {
+            step_max_diff = std::max(step_max_diff, std::fabs(logits[i] - ref_step_logits[i]));
+        }
+        if (step_max_diff > 1e-3f) {
+            std::cerr << "Golden decode logits exceeded tolerance at step " << step
+                      << " (max_diff=" << step_max_diff << ")\n";
+            return false;
+        }
     }
 
     std::cout << "[SUCCESS] Golden reference parity verified across prompt and "
@@ -595,6 +897,9 @@ bool run_golden_forward_tests() {
         return false;
     }
     if (!test_error_handling_contracts()) {
+        return false;
+    }
+    if (!test_q4_0_transformer_forward_and_numerical_metrics()) {
         return false;
     }
     if (!test_offline_golden_fixture_if_present()) {

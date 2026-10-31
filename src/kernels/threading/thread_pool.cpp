@@ -46,26 +46,49 @@ void ThreadPool::parallel_for(size_t num_tasks,
         total_tasks_ = num_tasks;
         next_task_ = 0;
         active_workers_ = workers_.size();
+        exception_ptr_ = nullptr;
         ++generation_;
     }
     cv_start_.notify_all();
 
+    // Dynamically chunk task acquisitions to eliminate lock contention on large workloads
+    const size_t chunk_size = std::max<size_t>(1, num_tasks / (num_threads_ * 4));
+
     // Thread 0 participates in executing tasks.
     while (true) {
-        size_t task_id = 0;
+        size_t start_idx = 0;
+        size_t end_idx = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (next_task_ >= total_tasks_) {
                 break;
             }
-            task_id = next_task_++;
+            start_idx = next_task_;
+            next_task_ = std::min(total_tasks_, start_idx + chunk_size);
+            end_idx = next_task_;
         }
-        task_fn(task_id, 0);
+        try {
+            for (size_t t = start_idx; t < end_idx; ++t) {
+                task_fn(t, 0);
+            }
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!exception_ptr_) {
+                exception_ptr_ = std::current_exception();
+            }
+            next_task_ = total_tasks_;
+            break;
+        }
     }
 
     std::unique_lock<std::mutex> lock(mutex_);
     cv_done_.wait(lock, [this]() { return active_workers_ == 0 && next_task_ >= total_tasks_; });
     current_fn_ = nullptr;
+    if (exception_ptr_) {
+        std::exception_ptr ex = exception_ptr_;
+        exception_ptr_ = nullptr;
+        std::rethrow_exception(ex);
+    }
 }
 
 void ThreadPool::worker_loop(size_t worker_id) {
@@ -82,8 +105,11 @@ void ThreadPool::worker_loop(size_t worker_id) {
             fn = current_fn_;
         }
 
+        const size_t chunk_size = std::max<size_t>(1, total_tasks_ / (num_threads_ * 4));
+
         while (true) {
-            size_t task_id = 0;
+            size_t start_idx = 0;
+            size_t end_idx = 0;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 if (next_task_ >= total_tasks_) {
@@ -92,9 +118,21 @@ void ThreadPool::worker_loop(size_t worker_id) {
                     }
                     break;
                 }
-                task_id = next_task_++;
+                start_idx = next_task_;
+                next_task_ = std::min(total_tasks_, start_idx + chunk_size);
+                end_idx = next_task_;
             }
-            fn(task_id, worker_id);
+            try {
+                for (size_t t = start_idx; t < end_idx; ++t) {
+                    fn(t, worker_id);
+                }
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (!exception_ptr_) {
+                    exception_ptr_ = std::current_exception();
+                }
+                next_task_ = total_tasks_;
+            }
         }
     }
 }

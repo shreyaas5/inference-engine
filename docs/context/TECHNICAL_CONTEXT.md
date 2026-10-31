@@ -61,6 +61,11 @@
   - `payload_nbytes` matches exact expected byte count for `shape` and `dtype`.
   - For `Q4_0`, `shape[ndim - 1] % 32 == 0` AND total elements $\% 32 == 0$.
   - No payload overlaps the `[0, align_up(directory_end, 64))` region or any other tensor's payload range.
+  - `payload_ranges.back().end == total_file_bytes` (no unreferenced trailing bytes).
+- **Mixed-Precision Policy in `.ie` (`ADR-008`):**
+  - 1D RMSNorm tensors (`45` tensors: `*.input_layernorm.weight`, `*.post_attention_layernorm.weight`, `model.norm.weight`) are **always stored as `DataType::FP32`** (`368,640` bytes total).
+  - In `--dtype q4_0` mode (`header.weight_dtype = DataType::Q4_0`), all 154 2D layer projection matrices (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`) are stored as `DataType::Q4_0` (`544,997,376` bytes). `model.embed_tokens.weight` and `lm_head.weight` (`[32000, 2048]`) default to `DataType::Q4_0` (`36,864,000` bytes each, yielding a **`619,113,472`-byte / `619.11 MB`** `.ie` file), or remain `DataType::FP32` when exported with `--keep-embeddings-fp32` (`1,069,673,472` bytes).
+  - `TensorView` (`include/inference_engine/tensor.hpp`) provides typed `data_f32()` (`const float*`) and `data_q4_0()` (`const BlockQ4_0*`) accessors along with `dtype()`, `ndim()`, `shape()`, `payload_nbytes()`, `num_elements()`, and `num_blocks()`.
 
 ---
 
@@ -122,7 +127,7 @@
 
 ## 8. Tokenizer, Chat Template & Autoregressive Sampling
 
-- **Chat Template (`VERIFIED IN CODE` — `Tokenizer::format_chat_prompt`):**
+- **Chat Template (`IMPLEMENTED FROM TinyLlama tokenizer_config.json` — validation pending):**
   ```text
   <|system|>
   {system_message}</s>
@@ -130,9 +135,9 @@
   {user_message}</s>
   <|assistant|>
   ```
-- **Special Token IDs (`VERIFIED IN CODE`):** `kUnkTokenId = 0`, `kBosTokenId = 1`, `kEosTokenId = 2`.
-- **SentencePiece C++ Binding (`PLANNED FOR M1`):** Currently stubbed with `byte + 3` in `src/tokenizer/tokenizer.cpp`.
-- **Greedy Argmax & Position Indexing (`VERIFIED IN CODE`):**
-  - `Sampler::sample_greedy()` selects the first index achieving maximum logit value.
+- **Special Token IDs:** The pinned `tokenizer_config.json` maps `<unk>`, `<s>`, and `</s>` to `0`, `1`, and `2`; `Tokenizer::load()` checks these values and the 32000-piece vocabulary.
+- **SentencePiece C++ Binding (`IMPLEMENTED; parity pending`):** CMake discovers SentencePiece >=0.2.0 through pkg-config or fetches a pinned upstream revision. `encode()`/`decode()` use its C++ processor and split the model's special tokens explicitly. The CI parity step compares against Hugging Face using the pinned tokenizer assets.
+- **Sampler (`IMPLEMENTED; focused synthetic test passed`):** Greedy argmax breaks ties toward the lowest ID; temperature/top-p sampling uses a seeded xorshift generator and filters NaN/negative-infinity logits.
+- **CLI (`IMPLEMENTED; build/real-model validation pending`):** Prefills prompt token positions, samples the first token from final prompt logits, feeds later generated tokens at the next position, and stops at EOS or the configured generation limit. `--benchmark` reports measured single-run metrics; this FP32 Transformer does not yet use `--threads`.
+- **Autoregressive Position Indexing (`VERIFIED IN CONTRACT`):**
   - A 12-token prompt occupies `pos = 0..11`; `pos = 11` logits predict the first generated token, which is then processed at `pos = 12`.
-

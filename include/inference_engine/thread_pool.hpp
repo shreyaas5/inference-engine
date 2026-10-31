@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -35,6 +36,7 @@ private:
     size_t total_tasks_ = 0;
     size_t next_task_ = 0;
     size_t active_workers_ = 0;
+    std::exception_ptr exception_ptr_{};
     std::function<void(size_t, size_t)> current_fn_{};
 
     void worker_loop(size_t worker_id);

@@ -1,15 +1,17 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "inference_engine/common.hpp"
 #include "inference_engine/config.hpp"
 #include "inference_engine/kv_cache.hpp"
 #include "inference_engine/loader.hpp"
-#include "inference_engine/thread_pool.hpp"
 
 namespace inference_engine {
+
+class ThreadPool;
 
 // Autoregressive Decoding Position Indexing Contract:
 // Suppose a prompt has N = 12 tokens:
@@ -22,7 +24,13 @@ namespace inference_engine {
 //   at position 12, and subsequent generated tokens are processed at positions 13, 14, etc.
 class TransformerEngine {
 public:
-    TransformerEngine() = default;
+    TransformerEngine();
+    ~TransformerEngine();
+
+    TransformerEngine(const TransformerEngine&) = delete;
+    TransformerEngine& operator=(const TransformerEngine&) = delete;
+    TransformerEngine(TransformerEngine&&) noexcept;
+    TransformerEngine& operator=(TransformerEngine&&) noexcept;
 
     Status init(const ModelConfig& config,
                 const ModelLoader* loader = nullptr,
@@ -33,34 +41,29 @@ public:
     const ModelConfig& config() const noexcept { return config_; }
     KvCache& kv_cache() noexcept { return kv_cache_; }
     const KvCache& kv_cache() const noexcept { return kv_cache_; }
+    const TransformerWeightBindings& bindings() const noexcept { return bindings_; }
+    SimdBackend backend() const noexcept { return backend_; }
+    uint32_t num_threads() const noexcept { return num_threads_; }
 
     // Runs a single-token forward pass at explicit sequence position `pos`.
     // Writes vocabulary logits of size `config().vocab_size` into `out_logits`.
     Status forward_token(int32_t token_id, uint32_t pos, float* out_logits);
 
 private:
-    struct LayerWeights {
-        const float* input_layernorm = nullptr;
-        const float* q_proj = nullptr;
-        const float* k_proj = nullptr;
-        const float* v_proj = nullptr;
-        const float* o_proj = nullptr;
-        const float* post_attention_layernorm = nullptr;
-        const float* gate_proj = nullptr;
-        const float* up_proj = nullptr;
-        const float* down_proj = nullptr;
-    };
+    void matmul(float* out,
+                const TensorView& weight,
+                const float* x,
+                size_t out_dim,
+                size_t in_dim) const noexcept;
 
     bool initialized_ = false;
     ModelConfig config_{};
     const ModelLoader* loader_ = nullptr;
     SimdBackend backend_ = SimdBackend::Scalar;
+    uint32_t num_threads_ = 1;
+    std::unique_ptr<ThreadPool> thread_pool_{};
     KvCache kv_cache_{};
-
-    const float* embed_tokens_ = nullptr;
-    const float* final_norm_ = nullptr;
-    const float* lm_head_ = nullptr;
-    std::vector<LayerWeights> layer_weights_{};
+    TransformerWeightBindings bindings_{};
 
     // Pre-allocated activation and scratch buffers
     std::vector<float> x_{};

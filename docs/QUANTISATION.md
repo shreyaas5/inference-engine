@@ -63,3 +63,15 @@ Given `BlockQ4_0`:
 2. For each $j \in \{0, \dots, 15\}$:
    $$q_{\text{low}} = \text{ block.qs}[j] \mathbin{\&} \text{0x0F}, \qquad q_{\text{high}} = (\text{block.qs}[j] \gg 4) \mathbin{\&} \text{0x0F}$$
    $$\hat{x}_j = (\text{int}(q_{\text{low}}) - 8) \cdot d_{\text{f32}}, \qquad \hat{x}_{j+16} = (\text{int}(q_{\text{high}}) - 8) \cdot d_{\text{f32}}$$
+
+## 5. Offline `.safetensors -> .ie` `Q4_0` Export & Error Metrics
+
+[`tools/convert_to_inference_engine.py`](../tools/convert_to_inference_engine.py) implements bit-exact `Q4_0` export (`--dtype q4_0`) matching [`src/kernels/quant_q4_0.cpp`](../src/kernels/quant_q4_0.cpp) and upstream GGML `block_q4_0`:
+
+- **Mixed-Precision Policy:**
+  - All 45 1D RMSNorm tensors (`[2048]`) remain in `DataType::FP32` (`368,640` bytes total).
+  - By default, all 156 2D weight tensors (`model.embed_tokens.weight`, `lm_head.weight`, and all 22 $\times$ 7 decoder projections) are quantised to `DataType::Q4_0` (`618,725,376` bytes total), producing a **`619,113,472`-byte (~619.11 MB)** `.ie` file ($7.11\times$ smaller than the `4.40 GB` `FP32` `.ie` file).
+  - Passing `--keep-embeddings-fp32` keeps `model.embed_tokens.weight` and `lm_head.weight` in `DataType::FP32` while quantising the 154 decoder layer projections to `Q4_0` (`1,069,673,472` bytes total).
+- **Verified Real `TinyLlama-1.1B-Chat-v1.0` Tensor Quantisation Error (`--report-error`):**
+  - `model.layers.0.self_attn.k_proj.weight [256, 2048]` (`524,288` weights): `MAE = 2.592e-03`, `RMSE = 4.085e-03`, `MaxAbsErr = 1.875e-01`, `RelL2 = 12.86%`.
+  - `model.layers.0.self_attn.v_proj.weight [256, 2048]` (`524,288` weights): `MAE = 8.170e-04`, `RMSE = 9.958e-04`, `MaxAbsErr = 5.829e-03`, `RelL2 = 9.04%`.

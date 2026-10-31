@@ -58,6 +58,7 @@ dist/
 .vscode/
 .idea/
 .vs/
+.clangd
 .clangd/
 .cache/
 .DS_Store

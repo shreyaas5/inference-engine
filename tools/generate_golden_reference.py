@@ -111,9 +111,12 @@ def generate_golden(
     max_new_tokens: int,
 ) -> int:
     try:
-        import torch  # type: ignore
-        from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
-    except ImportError:
+        import importlib
+        torch = importlib.import_module("torch")  # type: ignore
+        transformers = importlib.import_module("transformers")  # type: ignore
+        AutoModelForCausalLM = getattr(transformers, "AutoModelForCausalLM")
+        AutoTokenizer = getattr(transformers, "AutoTokenizer")
+    except (ImportError, ModuleNotFoundError):
         print(
             "[ERROR] PyTorch and Hugging Face transformers are required to generate real golden references.\n"
             "Install with: pip install torch transformers"
@@ -146,14 +149,18 @@ def generate_golden(
     gen_logits: List[float] = []
 
     curr_ids = input_ids
+    curr_logits = torch.tensor(last_logits, dtype=torch.float32)
+
     for step in range(max_new_tokens):
+        next_token = int(torch.argmax(curr_logits).item())
+        gen_tokens.append(next_token)
+
+        # Forward pass with next_token appended (evaluating at decode_pos = prompt_len + step)
+        curr_ids = torch.cat([curr_ids, torch.tensor([[next_token]], dtype=torch.long)], dim=1)
         with torch.no_grad():
             step_outputs = model(curr_ids)
-            step_logits = step_outputs.logits[0, -1, :].to(torch.float32)
-            next_token = int(torch.argmax(step_logits).item())
-            gen_tokens.append(next_token)
-            gen_logits.extend(step_logits.tolist())
-            curr_ids = torch.cat([curr_ids, torch.tensor([[next_token]], dtype=torch.long)], dim=1)
+            curr_logits = step_outputs.logits[0, -1, :].to(torch.float32)
+            gen_logits.extend(curr_logits.tolist())
 
     print(f"[INFO] Generated {len(gen_tokens)} tokens: {gen_tokens}")
 
