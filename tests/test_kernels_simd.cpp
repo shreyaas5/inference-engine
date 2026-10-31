@@ -517,9 +517,30 @@ bool test_simd_matmul_odd_rows_and_tails() {
                     return false;
                 }
             }
+
+            // 3. NEON 2-row tiled matmul verification (native on ARM64, scalar fallback on x86)
+            std::vector<float> neon_q4(out_dim, 0.0f);
+            neon::matmul_q4_0_f32(neon_q4.data(), q4_weights.data(), x.data(), out_dim, in_dim);
+            for (size_t r = 0; r < out_dim; ++r) {
+                if (!check_close(ref_q4[r], neon_q4[r], 2e-4f, 2e-4f)) {
+                    std::cerr << "NEON 2-row tiled matmul_q4_0_f32 mismatch at row " << r
+                              << " for odd shape (" << out_dim << "x" << in_dim << ")\n";
+                    return false;
+                }
+            }
+
+            std::vector<float> neon_f32(out_dim, 0.0f);
+            neon::matmul_f32(neon_f32.data(), weights.data(), x.data(), out_dim, in_dim);
+            for (size_t r = 0; r < out_dim; ++r) {
+                if (!check_close(ref_f32[r], neon_f32[r], 1e-4f, 1e-4f)) {
+                    std::cerr << "NEON 2-row tiled matmul_f32 mismatch at row " << r
+                              << " for odd shape (" << out_dim << "x" << in_dim << ")\n";
+                    return false;
+                }
+            }
         }
     }
-    std::cout << "  - Odd rows and boundary tails (Q4_0 & FP32): PASSED\n";
+    std::cout << "  - Odd rows and boundary tails (AVX2 & NEON): PASSED\n";
     return true;
 }
 

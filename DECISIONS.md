@@ -165,24 +165,24 @@
 
 ---
 
-## ADR-012: Vectorized Scale Accumulation, 2-Row Register Tiling, and Contiguous Multi-Row Slicing for Q4_0 Matmul
+## ADR-012: Vectorized Scale Accumulation, 2-Row Register Tiling, and Contiguous Multi-Row Slicing for Q4_0 Matmul across AVX2 and NEON
 
 - **Date:** 2026-11-01
 - **Status:** Accepted
 - **Context:**
-  In autoregressive decode, memory-bandwidth-bound matrix-vector operations ($y = W x$) dominate token generation latency. Profiling initial AVX2 Q4_0 kernels revealed three microarchitectural bottlenecks on AMD Zen 4 (Ryzen 7 7745HX):
-  1. Naive per-block horizontal reductions in `dot_q4_0_f32` called `hsum256_ps` 64 times per 2048-dim row, incurring ~14-16 cycles of shuffle/add latency per block (~1,000 stall cycles per row).
+  In autoregressive decode, memory-bandwidth-bound matrix-vector operations ($y = W x$) dominate token generation latency. Profiling initial AVX2 and NEON Q4_0 kernels revealed three microarchitectural bottlenecks:
+  1. Naive per-block horizontal reductions in `dot_q4_0_f32` called `hsum256_ps` / `vaddvq_f32` 64 times per 2048-dim row, incurring ~14-16 cycles of shuffle/add latency per block (~1,000 stall cycles per row).
   2. Row-by-row execution in `matmul_q4_0_f32` repeatedly streamed the activation vector $x$ from cache for each row ($M$ times), saturating L1/L2 load ports.
   3. Single-row dispatch in `dispatch_matmul_q4_0_f32` pushed up to 32,000 atomic task increments into the `ThreadPool` for vocabulary projection ($32000 	imes 2048$), causing severe thread queue contention.
   4. Software prefetching (`_mm_prefetch`) was evaluated and found to degrade throughput on Zen 4 by ~10-23% because Zen 4's hardware stream prefetchers already anticipate linear strides accurately, and manual prefetch instructions wasted front-end issue slots and polluted load queues.
 - **Decision:**
-  1. **Vectorized Scale Accumulation:** Accumulate 8-lane partial sums directly in 256-bit YMM vector registers across blocks using FMA (`_mm256_fmadd_ps(b_acc, vd, acc)`), deferring the horizontal reduction (`hsum256_ps`) to a single execution at the end of the entire row.
-  2. **2-Row Register Tiling:** Tile `matmul_q4_0_f32` across 2 rows simultaneously. Load 32 floats of activation vector $x$ once into `vx0..vx3` and reuse across both rows. All 12 required YMM registers fit comfortably within x86-64's 16 architectural YMM registers without spilling.
+  1. **Vectorized Scale Accumulation:** Accumulate 8-lane partial sums directly in vector registers across blocks using FMA (`_mm256_fmadd_ps` for AVX2, `vfmaq_f32` for NEON), deferring the horizontal reduction to a single execution at the end of the entire row.
+  2. **2-Row Register Tiling:** Tile `matmul_q4_0_f32` and `matmul_f32` across 2 rows simultaneously. Load 32 floats of activation vector $x$ once into registers and reuse across both rows. Supported on both x86-64 AVX2 (12/16 YMM registers) and ARM64 NEON (16/32 vector registers) with zero register spilling.
   3. **Contiguous Chunk Scheduling:** In `src/kernels/dispatch.cpp`, schedule contiguous multi-row chunks aligned to 2 rows (`rows_per_task = max(2, (out_dim / (num_threads * 4)) & ~1)`), reducing task count from 32,000 to ~32 tasks on 8 threads.
   4. **Strict Empirical Hardware Validation:** Avoid software prefetch instructions on modern out-of-order x86 architectures with aggressive hardware prefetching unless supported by hardware-specific profiling.
 - **Alternatives Considered:**
-  - 4-row register tiling (rejected: requires 18+ YMM registers, causing catastrophic register spilling onto stack).
-  - Explicit software prefetching (empirically tested and rejected due to 23% throughput penalty on Zen 4).
+  - 4-row register tiling (rejected: requires 18+ YMM registers on x86, causing register spilling onto stack).
+  - Explicit software prefetching (empirically tested and rejected due to ~30% latency penalty on Zen 4).
   - OpenMP or external BLAS (rejected by project constraints: zero external runtime dependencies).
 - **Consequences:**
-  Attention Q latency reduced by 43.1% on 8 threads (0.076 ms -> 0.053 ms, 157.09 GFLOPS, 44.18 GB/s). LM Head latency on 16 threads reduced from 0.874 ms to 0.808 ms (162.18 GFLOPS). All 8 CTest suites pass with zero regressions; maximum numerical discrepancy vs. scalar oracle is < 4.2e-5 absolute and < 3.5e-7 relative L2. Documented in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`.
+  Attention Q latency reduced by 30.10% on 8 threads (0.0764 ms -> 0.0534 ms, 1.43x speedup, 157.09 GFLOPS, 44.18 GB/s). LM Head latency on 16 threads reduced from 0.8740 ms to 0.8082 ms (+7.53%, 162.18 GFLOPS). NEON implementation in `src/kernels/neon/kernels_neon.cpp` ported and verified under ARM64 cross-target. All 8 CTest suites pass with zero regressions; maximum numerical discrepancy vs. scalar oracle is < 4.2e-5 absolute and < 3.5e-7 relative L2. Documented in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`.

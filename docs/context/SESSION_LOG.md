@@ -246,3 +246,21 @@
 - **Verification Run:**
   - Build: Clang 23.1.4 (Release) compiled with 0 warnings on all 4 targets.
   - CTest: **8 / 8 suites passed (100%)** in 2.14s.
+
+
+---
+
+## Session 013 — 2026-11-01 (00:20–00:30 IST)
+- **Engineer / Agent:** I (Principal CPU Performance Engineer, SIMD Optimisation Specialist, and Numerical Computing Researcher) + Antigravity Co-Pilot
+- **Branch:** `feature/cpu-kernel-optimisation`
+- **Objective:** Complete Phase 2B — Benchmark Verification, NEON Optimisation & Cross-Platform Validation.
+- **Files Modified:**
+  - `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` — Audited and recalculated all percentage improvements using standard formula `(Baseline - Optimised) / Baseline * 100`, providing reproducible data for the 5 core claims.
+  - `src/kernels/neon/kernels_neon.cpp` — Ported 2-row register tiling (`matmul_q4_0_f32`, `matmul_f32`) and vectorized scale accumulation (`dot_q4_0_f32`) to native ARM64 NEON instructions, preserving scalar fallbacks for non-ARM64 platforms.
+  - `tests/test_kernels_simd.cpp` — Added explicit 2-row tiled matmul verification for `neon::matmul_q4_0_f32` and `neon::matmul_f32` across odd dimensions ($1..255$) and boundary tails.
+  - `DECISIONS.md` — Updated `ADR-012` to encompass both AVX2 and ARM64 NEON 2-row tiling.
+  - Context documents (`CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/SESSION_LOG.md`).
+- **Verification Run:**
+  - Cross-compilation syntax & type check: `clang++ --target=aarch64-w64-mingw32 src/kernels/neon/kernels_neon.cpp -Iinclude -std=c++17 -Wall -Wextra -Wpedantic -fsyntax-only` passed with **0 warnings and 0 errors**.
+  - Native release build: Compiled with 0 warnings on Clang 23.1.4.
+  - CTest: **8 / 8 suites passed (100%)** in 2.08s.
