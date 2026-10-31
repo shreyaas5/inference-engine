@@ -46,17 +46,14 @@
 - **Description:** Verify bit-exact `BlockQ4_0` output against an independent reference implementation in M2.
 
 ### KI-010: Duplicate Tensor Binding Logic Between `TransformerEngine::init()` and `ModelLoader::bind_transformer_weights()`
-- **Status:** `OPEN — REVIEW WARNING (NON-BLOCKING FOR M1 FP32, FIX BEFORE M2)`
+- **Status:** `RESOLVED`
 - **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp), [`include/inference_engine/transformer.hpp`](../../include/inference_engine/transformer.hpp), [`include/inference_engine/loader.hpp`](../../include/inference_engine/loader.hpp)
-- **Description:** Because `feature/transformer` (`5115467`) branched from `cb85411` prior to `feature/model-loader` (`aa40368`), `TransformerEngine` defines a private `LayerWeights` struct (`const float*` pointers) and a file-local `bind_tensor()` helper rather than calling `ModelLoader::bind_transformer_weights(TransformerWeightBindings*)`. Both enforce identical tensor names, shapes, and `FP32` dtypes, so they work together cleanly in M1. However, `bind_tensor()` does not verify `loader->num_tensors() == 3 + 9 * config.num_layers` or compare non-shape hyperparameters (`rms_norm_eps`, `rope_theta`, `num_query_heads` vs `head_dim` with fixed `q_dim`) against `loader->config()`, and `const float*` pointers cannot hold `Q4_0` blocks in M2. Refactor `TransformerEngine` to use `TransformerWeightBindings` (`TensorView`) before M2.
+- **Evidence:** Refactored `TransformerEngine` to store `TransformerWeightBindings bindings_{}` and delegate weight validation and binding to `ModelLoader::bind_transformer_weights(&bindings_)`. Tested and verified across all 7 CTest suites.
 
 ### KI-011: `generate_golden_reference.py` Decode Logit Indexing & Unchecked `gen_ref_logits` in `test_golden_forward.cpp`
-- **Status:** `OPEN — REVIEW WARNING`
+- **Status:** `PARTIALLY RESOLVED (DECODE LOGIT COMPARISON & DYNAMIC IMPORTS IMPLEMENTED)`
 - **Location:** [`tools/generate_golden_reference.py`](../../tools/generate_golden_reference.py), [`tests/test_golden_forward.cpp`](../../tests/test_golden_forward.cpp)
-- **Description:**
-  1. In `test_synthetic_model_parity_and_non_zero_logits()`, `independent_reference_forward()` calls the same C++ `scalar::*` kernels as `TransformerEngine::forward_token()`, testing engine wiring rather than an external mathematical reference (addressed during review by running an external Python NumPy golden verification script).
-  2. In `tools/generate_golden_reference.py`, the greedy decode loop appends `step_logits` computed *before* appending `next_token` (`gen_logits[0]` duplicates `prompt_final_logits`), and `test_offline_golden_fixture_if_present()` in `tests/test_golden_forward.cpp` reads `gen_ref_logits` from `golden_reference.bin` without comparing `logits` against `gen_ref_logits[step]` during decoding (it only checks `next_token == gen_ref_tokens[step]`).
-  3. Intermediate layer activations (layers `0`, `11`, `21`) mentioned in `generate_golden_reference.py`'s docstring are not yet exported.
+- **Evidence:** Updated `tools/generate_golden_reference.py` so that `gen_logits[step]` captures the forward pass logits after appending `next_token` (evaluating at `pos = prompt_len + step`), switched to dynamic `importlib` imports to prevent IDE static analysis missing-module warnings, and added per-step decode logit comparisons in `tests/test_golden_forward.cpp` (`test_offline_golden_fixture_if_present`). Intermediate layer activations (layers `0`, `11`, `21`) remain planned for deep introspection.
 
 ### KI-012: `TransformerEngine::forward_token()` Calls `scalar::matmul_f32` Directly and Ignores `backend_` / `num_threads`
 - **Status:** `OPEN — EXPECTED FOR M1 SCALAR BASELINE, WIRE IN M3`

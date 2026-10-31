@@ -86,3 +86,22 @@
   - Executed an independent Python NumPy `FP32` golden verification across S's `.safetensors (BF16) -> .ie (FP32)` converter + C++ `ModelLoader` (`mmap`) + U's `TransformerEngine::forward_token` across a 5-token prompt + 4 greedy decode steps: **PASS** (`max_diff = 6.55651e-07`).
 - **Remaining Work:**
   - Download the real 2.20 GB `TinyLlama-1.1B-Chat-v1.0` checkpoint locally to run full 22-layer `.ie` conversion and PyTorch golden reference validation; link SentencePiece C++ in `Tokenizer` (Issue `#4`).
+
+
+---
+
+## Session 005 — 2026-10-31 (19:20–19:30 IST)
+- **Engineer / Agent:** U (Utkarsh Gupta, Scalar Transformer & KV Cache Owner) + Antigravity Co-Pilot
+- **Branch:** `feature/transformer-bindings`
+- **Objective:** Consolidate `TransformerEngine` with `ModelLoader::bind_transformer_weights` (resolving KI-010), fix decode logit verification in `test_golden_forward.cpp` and `generate_golden_reference.py` (KI-011), and handle Pyrefly static import diagnostics.
+- **Files Changed:**
+  - `include/inference_engine/transformer.hpp`: Replaced private `LayerWeights` and raw float pointers with `TransformerWeightBindings bindings_{}` and added `bindings()` accessor.
+  - `src/transformer/transformer.cpp`: Delegated tensor binding directly to `loader->bind_transformer_weights(&bindings_)`, removed redundant `bind_tensor` helper, and accessed weights via `TensorView::data_f32()`.
+  - `tests/test_golden_forward.cpp`: Added per-step decode logit verification against `gen_ref_logits` in `test_offline_golden_fixture_if_present`.
+  - `tools/generate_golden_reference.py`: Switched to dynamic `importlib` imports to prevent IDE static analysis missing-module diagnostics and aligned autoregressive decode forward logit recording with decode positions.
+  - `docs/context/KNOWN_ISSUES.md`: Marked KI-010 as `RESOLVED` and updated KI-011.
+  - `docs/context/SESSION_LOG.md`: Logged Session 005.
+- **Verification:**
+  - CMake Release build succeeded with 0 warnings.
+  - CTest test suite passed 7/7 (100%).
+  - `python tools/generate_golden_reference.py --self-test` passed.

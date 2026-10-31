@@ -33,34 +33,19 @@ public:
     const ModelConfig& config() const noexcept { return config_; }
     KvCache& kv_cache() noexcept { return kv_cache_; }
     const KvCache& kv_cache() const noexcept { return kv_cache_; }
+    const TransformerWeightBindings& bindings() const noexcept { return bindings_; }
 
     // Runs a single-token forward pass at explicit sequence position `pos`.
     // Writes vocabulary logits of size `config().vocab_size` into `out_logits`.
     Status forward_token(int32_t token_id, uint32_t pos, float* out_logits);
 
 private:
-    struct LayerWeights {
-        const float* input_layernorm = nullptr;
-        const float* q_proj = nullptr;
-        const float* k_proj = nullptr;
-        const float* v_proj = nullptr;
-        const float* o_proj = nullptr;
-        const float* post_attention_layernorm = nullptr;
-        const float* gate_proj = nullptr;
-        const float* up_proj = nullptr;
-        const float* down_proj = nullptr;
-    };
-
     bool initialized_ = false;
     ModelConfig config_{};
     const ModelLoader* loader_ = nullptr;
     SimdBackend backend_ = SimdBackend::Scalar;
     KvCache kv_cache_{};
-
-    const float* embed_tokens_ = nullptr;
-    const float* final_norm_ = nullptr;
-    const float* lm_head_ = nullptr;
-    std::vector<LayerWeights> layer_weights_{};
+    TransformerWeightBindings bindings_{};
 
     // Pre-allocated activation and scratch buffers
     std::vector<float> x_{};

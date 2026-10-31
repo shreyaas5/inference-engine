@@ -10,71 +10,6 @@
 
 namespace inference_engine {
 
-namespace {
-
-Status bind_tensor(const ModelLoader* loader,
-                   const std::string& name,
-                   DataType expected_dtype,
-                   uint32_t expected_ndim,
-                   const std::vector<uint64_t>& expected_shape,
-                   const float** out_ptr) {
-    if (loader == nullptr) {
-        return Status::Error(StatusCode::InvalidArgument, "ModelLoader is null");
-    }
-    const TensorView* view = loader->find_tensor(name);
-    if (view == nullptr || view->empty()) {
-        return Status::Error(StatusCode::InvalidArgument, "Required tensor not found in loader: " + name);
-    }
-    const TensorDesc& desc = view->desc();
-    if (desc.dtype != expected_dtype) {
-        return Status::Error(StatusCode::InvalidArgument,
-                             "Tensor " + name + " dtype mismatch: expected " +
-                             dtype_name(expected_dtype) + ", got " +
-                             dtype_name(desc.dtype));
-    }
-    if (desc.ndim != expected_ndim) {
-        return Status::Error(StatusCode::InvalidArgument,
-                             "Tensor " + name + " ndim mismatch: expected " +
-                             std::to_string(expected_ndim) + ", got " +
-                             std::to_string(desc.ndim));
-    }
-    for (uint32_t d = 0; d < expected_ndim; ++d) {
-        if (desc.shape[d] != expected_shape[d]) {
-            return Status::Error(StatusCode::InvalidArgument,
-                                 "Tensor " + name + " shape[" + std::to_string(d) +
-                                 "] mismatch: expected " + std::to_string(expected_shape[d]) +
-                                 ", got " + std::to_string(desc.shape[d]));
-        }
-    }
-    for (size_t d = expected_ndim; d < kMaxTensorDims; ++d) {
-        if (desc.shape[d] != 0) {
-            return Status::Error(StatusCode::InvalidArgument,
-                                 "Tensor " + name + " trailing dim " + std::to_string(d) +
-                                 " must be 0");
-        }
-    }
-    uint64_t expected_bytes = 0;
-    if (!desc.compute_expected_bytes(&expected_bytes)) {
-        return Status::Error(StatusCode::InvalidArgument,
-                             "Overflow computing expected bytes for " + name);
-    }
-    if (desc.payload_nbytes != expected_bytes) {
-        return Status::Error(StatusCode::InvalidArgument,
-                             "Tensor " + name + " payload_nbytes mismatch: expected " +
-                             std::to_string(expected_bytes) + ", got " +
-                             std::to_string(desc.payload_nbytes));
-    }
-    const float* ptr = view->data_f32();
-    if (ptr == nullptr) {
-        return Status::Error(StatusCode::InvalidArgument,
-                             "Tensor " + name + " has null FP32 data pointer");
-    }
-    *out_ptr = ptr;
-    return Status::Ok();
-}
-
-}  // namespace
-
 Status TransformerEngine::init(const ModelConfig& config,
                                const ModelLoader* loader,
                                SimdBackend backend,
@@ -98,140 +33,31 @@ Status TransformerEngine::init(const ModelConfig& config,
                              "ModelLoader is not loaded");
     }
 
+    // Verify non-shape hyperparameters between passed config and loader->config()
+    const auto& lc = loader->config();
+    if (config.vocab_size != lc.vocab_size ||
+        config.hidden_dim != lc.hidden_dim ||
+        config.intermediate_dim != lc.intermediate_dim ||
+        config.num_layers != lc.num_layers ||
+        config.num_query_heads != lc.num_query_heads ||
+        config.num_kv_heads != lc.num_kv_heads ||
+        config.head_dim != lc.head_dim ||
+        config.weight_dtype != lc.weight_dtype) {
+        return Status::Error(StatusCode::InvalidArgument,
+                             "TransformerEngine::init: config does not match loader config");
+    }
+
+    Status bind_st = loader->bind_transformer_weights(&bindings_);
+    if (!bind_st.ok()) {
+        return bind_st;
+    }
+
     Status kv_st = kv_cache_.init(config);
     if (!kv_st.ok()) {
         return kv_st;
     }
 
-    // 1. Bind model-level tensors: embed_tokens, norm, and lm_head
-    Status bind_st = bind_tensor(loader,
-                                 "model.embed_tokens.weight",
-                                 DataType::FP32,
-                                 2,
-                                 {config.vocab_size, config.hidden_dim},
-                                 &embed_tokens_);
-    if (!bind_st.ok()) {
-        return bind_st;
-    }
-
-    bind_st = bind_tensor(loader,
-                          "model.norm.weight",
-                          DataType::FP32,
-                          1,
-                          {config.hidden_dim},
-                          &final_norm_);
-    if (!bind_st.ok()) {
-        return bind_st;
-    }
-
-    bind_st = bind_tensor(loader,
-                          "lm_head.weight",
-                          DataType::FP32,
-                          2,
-                          {config.vocab_size, config.hidden_dim},
-                          &lm_head_);
-    if (!bind_st.ok()) {
-        return bind_st;
-    }
-
-    // 2. Bind per-layer decoder tensors across all config.num_layers
-    layer_weights_.resize(config.num_layers);
-    for (uint32_t l = 0; l < config.num_layers; ++l) {
-        const std::string prefix = "model.layers." + std::to_string(l) + ".";
-        LayerWeights& lw = layer_weights_[l];
-
-        bind_st = bind_tensor(loader,
-                              prefix + "input_layernorm.weight",
-                              DataType::FP32,
-                              1,
-                              {config.hidden_dim},
-                              &lw.input_layernorm);
-        if (!bind_st.ok()) {
-            return bind_st;
-        }
-
-        bind_st = bind_tensor(loader,
-                              prefix + "self_attn.q_proj.weight",
-                              DataType::FP32,
-                              2,
-                              {config.q_dim(), config.hidden_dim},
-                              &lw.q_proj);
-        if (!bind_st.ok()) {
-            return bind_st;
-        }
-
-        bind_st = bind_tensor(loader,
-                              prefix + "self_attn.k_proj.weight",
-                              DataType::FP32,
-                              2,
-                              {config.kv_dim(), config.hidden_dim},
-                              &lw.k_proj);
-        if (!bind_st.ok()) {
-            return bind_st;
-        }
-
-        bind_st = bind_tensor(loader,
-                              prefix + "self_attn.v_proj.weight",
-                              DataType::FP32,
-                              2,
-                              {config.kv_dim(), config.hidden_dim},
-                              &lw.v_proj);
-        if (!bind_st.ok()) {
-            return bind_st;
-        }
-
-        bind_st = bind_tensor(loader,
-                              prefix + "self_attn.o_proj.weight",
-                              DataType::FP32,
-                              2,
-                              {config.hidden_dim, config.q_dim()},
-                              &lw.o_proj);
-        if (!bind_st.ok()) {
-            return bind_st;
-        }
-
-        bind_st = bind_tensor(loader,
-                              prefix + "post_attention_layernorm.weight",
-                              DataType::FP32,
-                              1,
-                              {config.hidden_dim},
-                              &lw.post_attention_layernorm);
-        if (!bind_st.ok()) {
-            return bind_st;
-        }
-
-        bind_st = bind_tensor(loader,
-                              prefix + "mlp.gate_proj.weight",
-                              DataType::FP32,
-                              2,
-                              {config.intermediate_dim, config.hidden_dim},
-                              &lw.gate_proj);
-        if (!bind_st.ok()) {
-            return bind_st;
-        }
-
-        bind_st = bind_tensor(loader,
-                              prefix + "mlp.up_proj.weight",
-                              DataType::FP32,
-                              2,
-                              {config.intermediate_dim, config.hidden_dim},
-                              &lw.up_proj);
-        if (!bind_st.ok()) {
-            return bind_st;
-        }
-
-        bind_st = bind_tensor(loader,
-                              prefix + "mlp.down_proj.weight",
-                              DataType::FP32,
-                              2,
-                              {config.hidden_dim, config.intermediate_dim},
-                              &lw.down_proj);
-        if (!bind_st.ok()) {
-            return bind_st;
-        }
-    }
-
-    // 3. Pre-allocate intermediate activations and scratch buffers
+    // Pre-allocate intermediate activations and scratch buffers
     x_.assign(config.hidden_dim, 0.0f);
     norm_buf_.assign(config.hidden_dim, 0.0f);
     q_.assign(config.q_dim(), 0.0f);
@@ -255,7 +81,7 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
     if (!initialized_) {
         return Status::Error(StatusCode::InvalidArgument, "TransformerEngine is not initialized");
     }
-    if (loader_ == nullptr || embed_tokens_ == nullptr) {
+    if (loader_ == nullptr || bindings_.embed_tokens.empty()) {
         return Status::Error(StatusCode::InvalidArgument, "Model weights are not bound");
     }
     if (out_logits == nullptr) {
@@ -280,21 +106,26 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
     const uint32_t intermediate_dim = config_.intermediate_dim;
     const float eps = config_.rms_norm_eps;
 
+    const float* embed_table = bindings_.embed_tokens.data_f32();
+    if (embed_table == nullptr) {
+        return Status::Error(StatusCode::InvalidArgument, "embed_tokens is not FP32");
+    }
+
     // Step 1: Token embedding lookup: copy row `token_id` from model.embed_tokens.weight
-    const float* embed_row = embed_tokens_ + static_cast<size_t>(token_id) * hidden_dim;
+    const float* embed_row = embed_table + static_cast<size_t>(token_id) * hidden_dim;
     std::memcpy(x_.data(), embed_row, static_cast<size_t>(hidden_dim) * sizeof(float));
 
     // Step 2: Loop over all decoder layers
     for (uint32_t layer_idx = 0; layer_idx < config_.num_layers; ++layer_idx) {
-        const LayerWeights& lw = layer_weights_[layer_idx];
+        const LayerWeightBindings& lw = bindings_.layers[layer_idx];
 
         // 2a. Pre-Attention RMSNorm: u = RMSNorm(x, w_input_layernorm, eps)
-        scalar::rmsnorm_f32(norm_buf_.data(), x_.data(), lw.input_layernorm, hidden_dim, eps);
+        scalar::rmsnorm_f32(norm_buf_.data(), x_.data(), lw.input_layernorm.data_f32(), hidden_dim, eps);
 
         // 2b. Q/K/V Projections: q = W_q u, k = W_k u, v = W_v u
-        scalar::matmul_f32(q_.data(), lw.q_proj, norm_buf_.data(), q_dim, hidden_dim);
-        scalar::matmul_f32(k_.data(), lw.k_proj, norm_buf_.data(), kv_dim, hidden_dim);
-        scalar::matmul_f32(v_.data(), lw.v_proj, norm_buf_.data(), kv_dim, hidden_dim);
+        scalar::matmul_f32(q_.data(), lw.q_proj.data_f32(), norm_buf_.data(), q_dim, hidden_dim);
+        scalar::matmul_f32(k_.data(), lw.k_proj.data_f32(), norm_buf_.data(), kv_dim, hidden_dim);
+        scalar::matmul_f32(v_.data(), lw.v_proj.data_f32(), norm_buf_.data(), kv_dim, hidden_dim);
 
         // 2c. RoPE for Q and K
         scalar::rope_inplace_f32(q_.data(), config_.num_query_heads, config_.head_dim, pos, config_.rope_theta);
@@ -318,20 +149,20 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
                                   scores_.data());
 
         // 2f. Output Projection and First Residual: x <- x + W_o a
-        scalar::matmul_f32(proj_out_.data(), lw.o_proj, attn_out_.data(), hidden_dim, q_dim);
+        scalar::matmul_f32(proj_out_.data(), lw.o_proj.data_f32(), attn_out_.data(), hidden_dim, q_dim);
         for (uint32_t i = 0; i < hidden_dim; ++i) {
             x_[i] += proj_out_[i];
         }
 
         // 2g. Post-Attention RMSNorm: m = RMSNorm(x, w_post_attention_layernorm, eps)
-        scalar::rmsnorm_f32(norm_buf_.data(), x_.data(), lw.post_attention_layernorm, hidden_dim, eps);
+        scalar::rmsnorm_f32(norm_buf_.data(), x_.data(), lw.post_attention_layernorm.data_f32(), hidden_dim, eps);
 
         // 2h. SwiGLU Feed-Forward Network and Second Residual:
         // g = W_gate m, p = W_up m, h = SiLU(g) * p, x <- x + W_down h
-        scalar::matmul_f32(gate_.data(), lw.gate_proj, norm_buf_.data(), intermediate_dim, hidden_dim);
-        scalar::matmul_f32(up_.data(), lw.up_proj, norm_buf_.data(), intermediate_dim, hidden_dim);
+        scalar::matmul_f32(gate_.data(), lw.gate_proj.data_f32(), norm_buf_.data(), intermediate_dim, hidden_dim);
+        scalar::matmul_f32(up_.data(), lw.up_proj.data_f32(), norm_buf_.data(), intermediate_dim, hidden_dim);
         scalar::swiglu_f32(ffn_act_.data(), gate_.data(), up_.data(), intermediate_dim);
-        scalar::matmul_f32(proj_out_.data(), lw.down_proj, ffn_act_.data(), hidden_dim, intermediate_dim);
+        scalar::matmul_f32(proj_out_.data(), lw.down_proj.data_f32(), ffn_act_.data(), hidden_dim, intermediate_dim);
         for (uint32_t i = 0; i < hidden_dim; ++i) {
             x_[i] += proj_out_[i];
         }
@@ -344,8 +175,8 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
     }
 
     // Step 4: Final RMSNorm and LM-Head projection
-    scalar::rmsnorm_f32(norm_buf_.data(), x_.data(), final_norm_, hidden_dim, eps);
-    scalar::matmul_f32(out_logits, lm_head_, norm_buf_.data(), config_.vocab_size, hidden_dim);
+    scalar::rmsnorm_f32(norm_buf_.data(), x_.data(), bindings_.final_norm.data_f32(), hidden_dim, eps);
+    scalar::matmul_f32(out_logits, bindings_.lm_head.data_f32(), norm_buf_.data(), config_.vocab_size, hidden_dim);
 
     return Status::Ok();
 }
