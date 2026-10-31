@@ -1,8 +1,10 @@
 #include "inference_engine/loader.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <fstream>
+#include <unordered_set>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
@@ -129,6 +131,10 @@ Status ModelLoader::load_from_file(const std::string& path) {
 }
 
 Status ModelLoader::load_from_buffer(const uint8_t* data, size_t size) {
+    loaded_ = false;
+    tensors_.clear();
+    views_.clear();
+
     if (data == nullptr || size < kIeHeaderBytes) {
         return Status::Error(StatusCode::CorruptedFile,
                              "Model buffer is smaller than 64-byte header");
@@ -165,6 +171,11 @@ Status ModelLoader::load_from_buffer(const uint8_t* data, size_t size) {
     cfg.max_seq_len = read_u32_le(data + 44);
     cfg.rms_norm_eps = read_f32_le(data + 48);
     cfg.rope_theta = read_f32_le(data + 52);
+
+    if (!std::isfinite(cfg.rms_norm_eps) || !std::isfinite(cfg.rope_theta)) {
+        return Status::Error(StatusCode::CorruptedFile,
+                             "Non-finite floating-point hyperparameter in header");
+    }
 
     const uint64_t total_file_bytes = read_u64_le(data + 56);
     if (total_file_bytes != static_cast<uint64_t>(size)) {
@@ -268,6 +279,16 @@ Status ModelLoader::load_from_buffer(const uint8_t* data, size_t size) {
         }
     }
 
+    if (payload_ranges.empty()) {
+        if (total_file_bytes != cursor) {
+            return Status::Error(StatusCode::CorruptedFile,
+                                 "Empty-tensor .ie image has unexpected trailing bytes");
+        }
+    } else if (payload_ranges.back().end != total_file_bytes) {
+        return Status::Error(StatusCode::CorruptedFile,
+                             "Final tensor payload end does not match total_file_bytes");
+    }
+
     config_ = cfg;
     tensors_ = std::move(parsed_tensors);
     views_ = std::move(parsed_views);
@@ -283,6 +304,168 @@ const TensorView* ModelLoader::find_tensor(const std::string& name) const noexce
     return &it->second;
 }
 
+Status ModelLoader::validate_tensor_binding(
+    const std::string& name,
+    uint32_t expected_ndim,
+    const std::array<uint64_t, kMaxTensorDims>& expected_shape,
+    DataType expected_dtype,
+    TensorView* out_view) const noexcept {
+    if (!loaded_) {
+        return Status::Error(StatusCode::InvalidArgument, "ModelLoader is not loaded");
+    }
+    const TensorView* view = find_tensor(name);
+    if (view == nullptr) {
+        return Status::Error(StatusCode::CorruptedFile, "Missing required tensor: " + name);
+    }
+    const TensorDesc& d = view->desc();
+    if (d.ndim != expected_ndim) {
+        return Status::Error(StatusCode::CorruptedFile,
+                             "Tensor ndim mismatch for " + name);
+    }
+    if (d.shape != expected_shape) {
+        return Status::Error(StatusCode::CorruptedFile,
+                             "Tensor shape mismatch for " + name);
+    }
+    if (d.dtype != expected_dtype) {
+        return Status::Error(StatusCode::CorruptedFile,
+                             "Tensor dtype mismatch for " + name);
+    }
+    if (view->raw_data() == nullptr || d.payload_offset % kIePayloadAlignment != 0) {
+        return Status::Error(StatusCode::CorruptedFile,
+                             "Invalid or unaligned tensor data pointer for " + name);
+    }
+    if (out_view != nullptr) {
+        *out_view = *view;
+    }
+    return Status::Ok();
+}
+
+Status ModelLoader::bind_transformer_weights(TransformerWeightBindings* out_bindings) const {
+    if (!loaded_) {
+        return Status::Error(StatusCode::InvalidArgument, "ModelLoader is not loaded");
+    }
+    if (out_bindings == nullptr) {
+        return Status::Error(StatusCode::InvalidArgument, "out_bindings must not be null");
+    }
+
+    const size_t expected_tensor_count =
+        3u + 9u * static_cast<size_t>(config_.num_layers);
+    if (tensors_.size() != expected_tensor_count) {
+        return Status::Error(
+            StatusCode::CorruptedFile,
+            "Tensor count does not match expected Llama inventory (3 + 9 * num_layers)");
+    }
+
+    const uint64_t vocab = config_.vocab_size;
+    const uint64_t hidden = config_.hidden_dim;
+    const uint64_t inter = config_.intermediate_dim;
+    const uint64_t q_dim = config_.q_dim();
+    const uint64_t kv_dim = config_.kv_dim();
+    const DataType w_dtype = config_.weight_dtype;
+
+    TransformerWeightBindings bound{};
+    bound.layers.resize(config_.num_layers);
+
+    Status st = validate_tensor_binding("model.embed_tokens.weight",
+                                        2,
+                                        {vocab, hidden, 0, 0},
+                                        w_dtype,
+                                        &bound.embed_tokens);
+    if (!st.ok()) {
+        return st;
+    }
+
+    for (uint32_t l = 0; l < config_.num_layers; ++l) {
+        const std::string prefix = "model.layers." + std::to_string(l) + ".";
+        LayerWeightBindings& lb = bound.layers[l];
+
+        // 1D RMSNorm weights are always FP32 even when 2D matrices use Q4_0.
+        st = validate_tensor_binding(prefix + "input_layernorm.weight",
+                                     1,
+                                     {hidden, 0, 0, 0},
+                                     DataType::FP32,
+                                     &lb.input_layernorm);
+        if (!st.ok()) return st;
+
+        st = validate_tensor_binding(prefix + "self_attn.q_proj.weight",
+                                     2,
+                                     {q_dim, hidden, 0, 0},
+                                     w_dtype,
+                                     &lb.q_proj);
+        if (!st.ok()) return st;
+
+        st = validate_tensor_binding(prefix + "self_attn.k_proj.weight",
+                                     2,
+                                     {kv_dim, hidden, 0, 0},
+                                     w_dtype,
+                                     &lb.k_proj);
+        if (!st.ok()) return st;
+
+        st = validate_tensor_binding(prefix + "self_attn.v_proj.weight",
+                                     2,
+                                     {kv_dim, hidden, 0, 0},
+                                     w_dtype,
+                                     &lb.v_proj);
+        if (!st.ok()) return st;
+
+        st = validate_tensor_binding(prefix + "self_attn.o_proj.weight",
+                                     2,
+                                     {hidden, q_dim, 0, 0},
+                                     w_dtype,
+                                     &lb.o_proj);
+        if (!st.ok()) return st;
+
+        st = validate_tensor_binding(prefix + "post_attention_layernorm.weight",
+                                     1,
+                                     {hidden, 0, 0, 0},
+                                     DataType::FP32,
+                                     &lb.post_attention_layernorm);
+        if (!st.ok()) return st;
+
+        st = validate_tensor_binding(prefix + "mlp.gate_proj.weight",
+                                     2,
+                                     {inter, hidden, 0, 0},
+                                     w_dtype,
+                                     &lb.gate_proj);
+        if (!st.ok()) return st;
+
+        st = validate_tensor_binding(prefix + "mlp.up_proj.weight",
+                                     2,
+                                     {inter, hidden, 0, 0},
+                                     w_dtype,
+                                     &lb.up_proj);
+        if (!st.ok()) return st;
+
+        st = validate_tensor_binding(prefix + "mlp.down_proj.weight",
+                                     2,
+                                     {hidden, inter, 0, 0},
+                                     w_dtype,
+                                     &lb.down_proj);
+        if (!st.ok()) return st;
+    }
+
+    st = validate_tensor_binding("model.norm.weight",
+                                 1,
+                                 {hidden, 0, 0, 0},
+                                 DataType::FP32,
+                                 &bound.final_norm);
+    if (!st.ok()) {
+        return st;
+    }
+
+    st = validate_tensor_binding("lm_head.weight",
+                                 2,
+                                 {vocab, hidden, 0, 0},
+                                 w_dtype,
+                                 &bound.lm_head);
+    if (!st.ok()) {
+        return st;
+    }
+
+    *out_bindings = std::move(bound);
+    return Status::Ok();
+}
+
 Status ModelLoader::build_ie_image(const ModelConfig& config,
                                    const std::vector<TensorDesc>& descriptors,
                                    const std::vector<std::vector<uint8_t>>& payloads,
@@ -294,22 +477,39 @@ Status ModelLoader::build_ie_image(const ModelConfig& config,
         return Status::Error(StatusCode::InvalidArgument,
                              "descriptors and payloads count mismatch");
     }
+    if (descriptors.size() > kIeMaxTensorCount) {
+        return Status::Error(StatusCode::InvalidArgument, "Too many tensors for .ie format");
+    }
     Status cfg_st = config.validate();
     if (!cfg_st.ok()) {
         return cfg_st;
     }
 
-    // Compute directory size first.
     uint64_t dir_bytes = 0;
+    std::unordered_set<std::string> seen_names;
     for (const auto& d : descriptors) {
         if (d.name.empty() || d.name.size() > kIeMaxTensorNameLen) {
             return Status::Error(StatusCode::InvalidArgument, "Invalid tensor name length");
         }
-        dir_bytes += 4u + static_cast<uint64_t>(d.name.size()) + 56u;
+        if (!seen_names.insert(d.name).second) {
+            return Status::Error(StatusCode::InvalidArgument,
+                                 "Duplicate tensor name in build_ie_image: " + d.name);
+        }
+        const uint64_t entry_len = 4u + static_cast<uint64_t>(d.name.size()) + 56u;
+        if (!checked_add_u64(dir_bytes, entry_len, &dir_bytes)) {
+            return Status::Error(StatusCode::InvalidArgument, "Directory byte size overflow");
+        }
+    }
+
+    uint64_t header_and_dir = 0;
+    if (!checked_add_u64(kIeHeaderBytes, dir_bytes, &header_and_dir)) {
+        return Status::Error(StatusCode::InvalidArgument, "Header + directory size overflow");
     }
 
     uint64_t payload_cursor = 0;
-    if (!align_up_u64(kIeHeaderBytes + dir_bytes, kIePayloadAlignment, &payload_cursor)) {
+    if (descriptors.empty()) {
+        payload_cursor = header_and_dir;
+    } else if (!align_up_u64(header_and_dir, kIePayloadAlignment, &payload_cursor)) {
         return Status::Error(StatusCode::InvalidArgument, "Offset alignment overflow");
     }
 

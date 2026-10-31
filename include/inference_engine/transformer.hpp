@@ -39,11 +39,41 @@ public:
     Status forward_token(int32_t token_id, uint32_t pos, float* out_logits);
 
 private:
+    struct LayerWeights {
+        const float* input_layernorm = nullptr;
+        const float* q_proj = nullptr;
+        const float* k_proj = nullptr;
+        const float* v_proj = nullptr;
+        const float* o_proj = nullptr;
+        const float* post_attention_layernorm = nullptr;
+        const float* gate_proj = nullptr;
+        const float* up_proj = nullptr;
+        const float* down_proj = nullptr;
+    };
+
     bool initialized_ = false;
     ModelConfig config_{};
     const ModelLoader* loader_ = nullptr;
     SimdBackend backend_ = SimdBackend::Scalar;
     KvCache kv_cache_{};
+
+    const float* embed_tokens_ = nullptr;
+    const float* final_norm_ = nullptr;
+    const float* lm_head_ = nullptr;
+    std::vector<LayerWeights> layer_weights_{};
+
+    // Pre-allocated activation and scratch buffers
+    std::vector<float> x_{};
+    std::vector<float> norm_buf_{};
+    std::vector<float> q_{};
+    std::vector<float> k_{};
+    std::vector<float> v_{};
+    std::vector<float> attn_out_{};
+    std::vector<float> proj_out_{};
+    std::vector<float> gate_{};
+    std::vector<float> up_{};
+    std::vector<float> ffn_act_{};
+    std::vector<float> scores_{};
 };
 
 }  // namespace inference_engine
