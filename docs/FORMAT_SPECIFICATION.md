@@ -71,3 +71,17 @@ Immediately following byte `64`, `tensor_count` entries are stored back-to-back:
 7. For `FP32` tensors, `payload_nbytes == num_elements * 4`.
 8. `payload_offset % 64 == 0` and `payload_offset + payload_nbytes <= total_file_bytes` (via `checked_add_u64`).
 9. Sorting all `[payload_offset, payload_offset + payload_nbytes)` intervals confirms `payload_ranges[0].begin >= align_up(directory_end, 64)` and `payload_ranges[i].begin >= payload_ranges[i - 1].end` (zero overlap).
+10. `payload_ranges.back().end == total_file_bytes` (no unreferenced trailing bytes).
+
+## 6. Mixed-Precision `Q4_0` Model Policy & Exact `TinyLlama-1.1B-Chat-v1.0` Storage Breakdown
+
+When exporting a `TinyLlama-1.1B-Chat-v1.0` checkpoint (`201` tensors, `1,100,048,384` parameters) with `tools/convert_to_inference_engine.py`:
+
+| Format Mode | Header `weight_dtype` | 1D RMSNorm Tensors (`45`) | 2D Layer Projections (`154`) | `embed_tokens` & `lm_head` (`2`) | Payload Bytes | Total `.ie` File Bytes |
+|---|---|---|---|---|---|---|
+| `--dtype fp32` | `FP32` (`0`) | `FP32` (`368,640` B) | `FP32` (`3,875,536,896` B) | `FP32` (`524,288,000` B) | `4,400,193,536` | **`4,400,212,992`** (~4.40 GB) |
+| `--dtype q4_0` (Default) | `Q4_0` (`2`) | `FP32` (`368,640` B) | `Q4_0` (`544,997,376` B) | `Q4_0` (`73,728,000` B) | `619,094,016` | **`619,113,472`** (~619.11 MB) |
+| `--dtype q4_0 --keep-embeddings-fp32` | `Q4_0` (`2`) | `FP32` (`368,640` B) | `Q4_0` (`544,997,376` B) | `FP32` (`524,288,000` B) | `1,069,654,016` | **`1,069,673,472`** (~1.07 GB) |
+
+- **1D RMSNorm weights** (`model.layers.{0..21}.input_layernorm.weight`, `model.layers.{0..21}.post_attention_layernorm.weight`, `model.norm.weight`) are **always stored in `FP32`** to preserve per-channel normalization fidelity at negligible storage cost (`368.64 KB`).
+- **2D weight matrices** (`[out_features, in_features]`) have innermost dimension `in_features` $\in \{2048, 5632\}$, which are exact multiples of `32`, and are quantised to 18-byte `BlockQ4_0` records (`0.5625` bytes/weight).

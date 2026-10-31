@@ -19,9 +19,9 @@
 ## 2. Per-Member Module Ownership & Current Status
 
 ### Member S — Project Lead & Model Loader
-- **Feature Branch:** `feature/model-loader` (merged into `main` via `177fe49`)
+- **Feature Branches:** `feature/model-loader` (`aa40368`, merged into `main` via `177fe49`), `feature/model-format-q4` (M2 `Q4_0` converter, mixed-precision `ModelLoader`, `TensorView::data_q4_0()`, and `TransformerWeightBindings` consolidation)
 - **Assigned GitHub Issue:** [#1 — `[M1][Owner: S] Implement TinyLlama safetensors-to-.ie FP32 converter and tensor binding validation`](https://github.com/shreyaas5/inference-engine/issues/1)
-- **Status:** **COMPLETE ON `MAIN` (SYNTHETIC / METADATA)**. Full 2.2 GB TinyLlama payload download and offline `.ie` conversion pending.
+- **Status:** **M1 & M2 CONVERTER / LOADER / BINDING CONSOLIDATION COMPLETE (`feature/model-format-q4`)**. Full 2.2 GB TinyLlama payload local download and offline `.ie` conversion pending.
 
 ---
 

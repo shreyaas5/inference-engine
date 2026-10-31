@@ -104,3 +104,59 @@
   - Multi-threaded SIMD benchmark in `kernels_simd` verified task chunking scaling from 1 to 16 threads.
 - **Publication:**
   - Pushed `integration` to `origin/integration` (`cb85411..4e3146e..` now pointing to `integration`).
+
+---
+
+## Session 006 — 2026-10-31 (19:33–19:55 IST)
+- **Engineer / Agent:** S (`shreyaas5`) + Antigravity (Principal C++ Systems Engineer & Inference-Runtime Architect on `feature/model-format-q4`)
+- **Objective:** Complete Member S's Milestone M2 engineering deliverables: streaming `Q4_0` `.ie` model export and quantisation error reporting (`tools/convert_to_inference_engine.py`), `TensorView::data_q4_0()` and mixed-precision `ModelLoader` validation, unified `TransformerWeightBindings` consolidation with `TransformerEngine` (`KI-010`), and real `TinyLlama-1.1B-Chat-v1.0` tensor verification.
+- **Files Changed on `feature/model-format-q4`:**
+  - `tools/convert_to_inference_engine.py` — Implemented `--dtype q4_0`, `--input` (file or directory), `--config`, `--keep-embeddings-fp32`, `--report-error` (`MAE`, `RMSE`, `MaxAbsErr`, `RelL2`), and bit-exact IEEE 754 `fp32_to_fp16` + 32-element `BlockQ4_0` packing (`cd98ae8`).
+  - `tools/inspect_checkpoint.py` — Added `.ie` v1 `FP32`/`Q4_0` dtype breakdown, `Q4_0` shape divisibility by 32 check, and non-overlap/exact-EOF validation (`cd98ae8`).
+  - `include/inference_engine/tensor.hpp`, `src/loader/loader.cpp` — Added `TensorView::data_q4_0()`, `dtype()`, `ndim()`, `shape()`, `payload_nbytes()`, `num_elements()`, `num_blocks()`, header/directory dtype validation, and mixed-precision `bind_transformer_weights` (`b13baf8`).
+  - `include/inference_engine/transformer.hpp`, `src/transformer/transformer.cpp`, `tests/test_golden_forward.cpp`, `tools/generate_golden_reference.py` — Unified `TransformerEngine` weight binding with `ModelLoader::bind_transformer_weights(&bindings_)` (`KI-010` resolved) and added per-step decode logit checks (`KI-011`) (`6dd4fed`).
+  - `tests/test_loader_validation.cpp` — Added `Q4_0` and mixed-precision `.ie` binding tests, `dispatch_matmul_q4_0_f32` verification on bound `TensorView`, `TransformerEngine::init` `Q4_0` binding tests, and negative `Q4_0` malformed tests.
+  - Documentation: `DECISIONS.md` (`ADR-008`), `docs/FORMAT_SPECIFICATION.md`, `docs/QUANTISATION.md`, `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `TEAM_STATUS.md`, and `docs/context/*.md`.
+- **Tests Run & Results:**
+  - `cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON && cmake --build build --parallel 4`: **0 warnings**.
+  - `ctest --test-dir build --output-on-failure`: **7 / 7 suites passed**.
+  - `python3 tools/convert_to_inference_engine.py --self-test`: **PASSED**.
+  - Real `TinyLlama-1.1B-Chat-v1.0` HTTP Range tensor verification: verified `model.layers.0.self_attn.k_proj.weight` (`MAE = 2.592e-03`, `RMSE = 4.085e-03`) and `model.layers.0.self_attn.v_proj.weight` (`MAE = 8.170e-04`, `RMSE = 9.958e-04`), and cross-language Python `.ie` (`FP32` & `Q4_0`) reload via `INFERENCE_ENGINE_TEST_IE_PATH`.
+- **Remaining Work:**
+  - Merge `feature/model-format-q4` into `integration` and wire `dispatch_matmul_q4_0_f32` / `ThreadPool` into `TransformerEngine::forward_token` (`KI-012`, Owner: U).
+  - Integrate SentencePiece C++ in `src/tokenizer/tokenizer.cpp` (Issue `#4`, Owner: P).
+
+---
+
+## Session 007 — 2026-10-31 (22:11–22:25 IST)
+- **Engineer / Agent:** S (`shreyaas5`) + Antigravity (Principal C++ Systems Engineer & Inference-Runtime Architect on `feature/real-checkpoint-validation`)
+- **Objective:** Complete real TinyLlama-1.1B checkpoint validation, storage/time feasibility analysis, representative real-tensor `Q4_0` quantisation error analysis, cross-module coordination with U/I/P, and memory/runtime architecture review.
+- **Actions & Findings:**
+  1. **Branch Management:** Created `feature/real-checkpoint-validation` from `feature/model-format-q4` (`cb176b3`). Left `main` (`177fe49`), `integration` (`783b8f4`), and `feature/model-loader` (`aa40368`) protected and untouched.
+  2. **Storage & Network Analysis (Task B):**
+     - Verified available local disk storage: `278 GiB` free (well above the ~8.29 GB required for source + all three `.ie` format variants).
+     - Downloaded official metadata and tokenizer files into `models/TinyLlama-1.1B-Chat-v1.0/`: `config.json`, `generation_config.json`, `tokenizer.json`, `tokenizer.model` (`499,723` bytes), and `tokenizer_config.json`.
+     - Verified live `201/201` `BF16` tensor inventory and exact shapes against `ModelConfig` via `tools/inspect_checkpoint.py --inspect-remote-hf`.
+     - Analyzed network throughput (~1.4–1.6 MB/s) and calculated required download time (~25 minutes for 2.20 GB). Initiated background download to verify initial payload (`300 MB` downloaded, completely validating `lm_head.weight`, `model.embed_tokens.weight`, `model.layers.0.input_layernorm.weight`, `model.layers.0.mlp.down_proj.weight`, and `model.layers.0.mlp.gate_proj.weight`), and verified resume capability (`curl -C -`).
+  3. **Real-Checkpoint Quantisation Error Analysis (Task D):**
+     - Added `--eval-real-quant-error` to `tools/inspect_checkpoint.py` to evaluate representative projection matrices from real Hugging Face checkpoint weights via HTTP Range:
+       - `k_proj.weight`: `MAE = 2.5923e-03`, `RMSE = 4.0847e-03`, `MaxAbsErr = 0.187500`, `RelL2 = 12.86%`
+       - `v_proj.weight`: `MAE = 8.1699e-04`, `RMSE = 9.9576e-04`, `MaxAbsErr = 0.005829`, `RelL2 = 9.04%`
+       - `q_proj.weight`: `MAE = 9.1898e-04`, `RMSE = 1.3391e-03`, `MaxAbsErr = 0.045654`, `RelL2 = 11.71%`
+       - `o_proj.weight`: `MAE = 5.3871e-04`, `RMSE = 7.4152e-04`, `MaxAbsErr = 0.014282`, `RelL2 = 9.18%`
+       - `gate_proj.weight`: `MAE = 1.1884e-03`, `RMSE = 1.4461e-03`, `MaxAbsErr = 0.009338`, `RelL2 = 8.84%`
+       - `up_proj.weight`: `MAE = 1.2097e-03`, `RMSE = 1.4587e-03`, `MaxAbsErr = 0.009399`, `RelL2 = 8.70%`
+       - `down_proj.weight`: `MAE = 1.2098e-03`, `RMSE = 1.4686e-03`, `MaxAbsErr = 0.011719`, `RelL2 = 8.88%`
+       - `embed_tokens.weight`: `MAE = 5.3562e-04`, `RMSE = 8.6536e-04`, `MaxAbsErr = 0.006714`, `RelL2 = 8.80%`
+       - `lm_head.weight`: `MAE = 1.8474e-03`, `RMSE = 2.5972e-03`, `MaxAbsErr = 0.017578`, `RelL2 = 11.43%`
+  4. **Memory & Runtime Architecture Review (Task F):**
+     - Model weight zero-duplication: POSIX `mmap` direct mapping confirmed. Zero memory copies during `load_from_file`.
+     - `TensorView` lifetime semantics: non-owning views valid for the lifetime of `ModelLoader`.
+     - Activation workspace reuse: pre-allocated scratch workspace (~393 KB total) reused across all 22 layers with zero heap allocations during `forward_token`.
+     - KV cache: `92.2 MB` total footprint for 2048-token context across 22 layers with causal GQA (4 KV heads).
+  5. **Verification & Tests:**
+     - `cmake --build build --parallel 4 && ctest --test-dir build --output-on-failure`: **7 / 7 suites passed**.
+     - All Python offline tool self-tests passed (`inspect_checkpoint.py`, `convert_to_inference_engine.py`, `generate_golden_reference.py`, `verify_tokenizer_parity.py`).
+- **Files Modified:**
+  - `tools/inspect_checkpoint.py`
+  - Context documentation (`CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/NEXT_ACTIONS.md`, `docs/context/SESSION_LOG.md`).

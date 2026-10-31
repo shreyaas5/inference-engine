@@ -1,31 +1,42 @@
 # `SESSION_HANDOFF.md` — Immediate Continuation Instructions
 
-**Last Updated:** 2026-10-31T19:25:00+05:30  
-**Last Session Role:** Senior C++ Systems Engineer & Code Reviewer (Integration of Member I's Quantisation & SIMD Work into `integration`)
+**Last Updated:** 2026-10-31T22:20:00+05:30  
+**Last Session Role:** Principal C++ Systems Engineer & Inference-Runtime Architect (Member S — System Architecture, Model Loading & Real Checkpoint Validation on `feature/real-checkpoint-validation`)
 
 ---
 
-## 1. What We Did in This Session (Session 005)
+## 1. What We Did in This Session (Session 007)
 
-1. **Audited and Merged Member I's Quantisation, SIMD, and Threading Branch:**
-   - Reviewed `origin/feature/quantisation-simd` (`f76ab55`, containing commits `a948734` and `f76ab55`).
-   - Verified Q4_0 18-byte format, low/high nibble split, signed clamp math, and bit-exact parity against upstream GGML logic (`KI-007`).
-   - Verified NEON Q4_0 vectorization (`compute_block_unscaled_dot_neon`, `neon::dot_q4_0_f32`, `neon::matmul_q4_0_f32`) natively on Apple M4 ARM64.
-   - Verified AVX2/FMA vector implementation and CPUID runtime detection code.
-   - Verified ThreadPool task chunking optimization eliminating lock contention.
-   - Merged `origin/feature/quantisation-simd` (`f76ab55`) into `integration` via merge commit `967f072`.
-2. **Validated Release Build & CTest Suites:**
-   - Clean Release build: 0 compiler warnings.
-   - All 7 CTest suites passed (`loader_validation`, `quant_packing`, `kernels_scalar`, `kernels_simd`, `kv_cache`, `tokenizer`, `golden_forward`).
-3. **Pushed Integration Branch to GitHub:**
-   - Pushed `integration` to `origin/integration`.
+1. **Created Branch `feature/real-checkpoint-validation` from `feature/model-format-q4` (`cb176b3`):**
+   - Kept `main` (`177fe49`), `integration` (`783b8f4`), and `feature/model-loader` (`aa40368`) completely protected and untouched.
+2. **Executed Real Checkpoint Validation (Tasks B & C):**
+   - Verified local disk capacity (`278 GiB` free, well above the 8.29 GB required for source + all three `.ie` format variants).
+   - Downloaded official metadata and tokenizer files into `models/TinyLlama-1.1B-Chat-v1.0/`: `config.json`, `generation_config.json`, `tokenizer.json`, `tokenizer.model` (`499,723` B for SentencePiece), and `tokenizer_config.json`.
+   - Verified live 201-tensor inventory, exact shapes, and `BF16` dtypes against `ModelConfig` via `python3 tools/inspect_checkpoint.py --inspect-remote-hf`.
+   - Analyzed full download throughput (~1.4–1.6 MB/s) and calculated required time (~25 minutes for 2.20 GB). Initiated background download and confirmed valid partial safetensors structure (first 5 tensors including full `lm_head.weight` and `model.embed_tokens.weight` verified).
+3. **Quantisation Error Analysis on Real Checkpoint Tensors (Task D):**
+   - Implemented and verified `--eval-real-quant-error` in `tools/inspect_checkpoint.py` to evaluate representative projection matrices from real Hugging Face checkpoint weights via HTTP Range:
+     - `k_proj.weight`: `MAE = 2.5923e-03`, `RMSE = 4.0847e-03`, `MaxAbsErr = 0.187500`, `RelL2 = 12.86%`
+     - `v_proj.weight`: `MAE = 8.1699e-04`, `RMSE = 9.9576e-04`, `MaxAbsErr = 0.005829`, `RelL2 = 9.04%`
+     - `q_proj.weight`: `MAE = 9.1898e-04`, `RMSE = 1.3391e-03`, `MaxAbsErr = 0.045654`, `RelL2 = 11.71%`
+     - `o_proj.weight`: `MAE = 5.3871e-04`, `RMSE = 7.4152e-04`, `MaxAbsErr = 0.014282`, `RelL2 = 9.18%`
+     - `gate_proj.weight`: `MAE = 1.1884e-03`, `RMSE = 1.4461e-03`, `MaxAbsErr = 0.009338`, `RelL2 = 8.84%`
+     - `up_proj.weight`: `MAE = 1.2097e-03`, `RMSE = 1.4587e-03`, `MaxAbsErr = 0.009399`, `RelL2 = 8.70%`
+     - `down_proj.weight`: `MAE = 1.2098e-03`, `RMSE = 1.4686e-03`, `MaxAbsErr = 0.011719`, `RelL2 = 8.88%`
+     - `embed_tokens.weight`: `MAE = 5.3562e-04`, `RMSE = 8.6536e-04`, `MaxAbsErr = 0.006714`, `RelL2 = 8.80%`
+     - `lm_head.weight`: `MAE = 1.8474e-03`, `RMSE = 2.5972e-03`, `MaxAbsErr = 0.017578`, `RelL2 = 11.43%`
+4. **Memory and Runtime Architecture Review (Tasks E & F):**
+   - Verified zero buffer duplication in `ModelLoader` (POSIX `mmap` direct mapping).
+   - Confirmed `TensorView` lifetime semantics: non-owning views tied to `ModelLoader` lifetime.
+   - Confirmed zero-allocation execution loop in `TransformerEngine::forward_token` (~393 KB pre-allocated scratch space reused across all 22 layers).
+   - Confirmed KV cache allocation footprint: `92.2 MB` total for full 2048-token context across 22 layers with causal GQA (4 KV heads).
 
 ---
 
-## 2. What Is Currently Working on `integration` (Verified)
+## 2. What Is Currently Working (Verified)
 
-- **Model Loader & Converter (S):** Full `.ie` v1 binary parser, `mmap` zero-copy loader, 201-tensor validation, streaming `BF16 -> FP32` converter.
-- **Scalar Transformer & Causal GQA (U):** Full 16-step forward pass, GQA attention kernel, KV cache commit separation, independent NumPy parity verified.
+- **Model Loader, Mixed-Precision Validator & Converter (S):** Full `.ie` v1 binary parser, `mmap` zero-copy loader, 201-tensor validation, streaming `BF16 -> FP32` and `BF16 -> Q4_0` converter, `TensorView::data_f32()` / `data_q4_0()`, `--eval-real-quant-error` evaluation tool, and unified `TransformerWeightBindings` across `ModelLoader` and `TransformerEngine`.
+- **Scalar Transformer & Causal GQA (U):** Full 16-step `FP32` forward pass, GQA attention kernel, KV cache commit separation, independent NumPy parity verified.
 - **Quantisation & SIMD Kernels (I):**
   - Q4_0 block packing/dequantisation with verified GGML bit-exact reference parity.
   - ARM64 NEON Q4_0 & FP32 dot/matmul kernels verified natively.
@@ -37,18 +48,13 @@
 
 ## 3. What Remains Pending / Important Limitations
 
-- **AVX2/FMA Native Verification:** Requires testing on an x86-64 CPU (Member I's machine or GitHub Actions runner).
-- **TransformerEngine Q4_0 Dispatch:** `TransformerEngine::forward_token` still uses `scalar::matmul_f32` directly and requires `FP32` weights. Wiring `dispatch_matmul_q4_0_f32` into the transformer forward loop is scheduled for Milestone M2/M3.
-- **Actual TinyLlama Q4_0 Inference:** Offline `--dtype q4_0` export in `convert_to_inference_engine.py` and running inference on real quantised weights is not yet validated.
-- **SentencePiece C++ Tokenizer (P):** `src/tokenizer/tokenizer.cpp` still uses the M0 byte-offset stub.
-- **Main Branch:** `main` is at `177fe49` (contains M1 FP32 baseline; I's work is on `integration`, ready for M2).
+- **TransformerEngine Q4_0 Forward Execution (`KI-012`):** `TransformerEngine::init` validates and binds both `FP32` and `Q4_0` models into `bindings_`, while `TransformerEngine::forward_token` executes `FP32` scalar kernels and returns `StatusCode::NotImplemented` on `Q4_0` models until `dispatch_matmul_q4_0_f32` and `Q4_0` embedding row dequantisation are wired into `forward_token()`.
+- **Full TinyLlama End-to-End Generation:** Pending SentencePiece C++ integration (P) and Q4_0 execution wiring (U).
+- **SentencePiece C++ Tokenizer (P — `KI-003`):** `tokenizer.model` is now downloaded locally at `models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model`.
 
 ---
 
 ## 4. Next Task
 
-- **For Member P (`feature/runtime-tokenizer` — Issue `#4`):**
-  - Merge `integration` into `feature/runtime-tokenizer`, integrate SentencePiece C++, and wire the CLI generation loop in `src/app/main.cpp`.
-- **For Milestone M2 (Quantisation Integration):**
-  - Wire `dispatch_matmul_q4_0_f32` and `ThreadPool` into `TransformerEngine::forward_token()`.
-  - Add `--dtype q4_0` export to `tools/convert_to_inference_engine.py`.
+- **For Member U (Transformer Engine):** Wire `dispatch_matmul_q4_0_f32` and `dequantize_row_q4_0` into `TransformerEngine::forward_token()`.
+- **For Member P (Runtime & Tokenizer):** Link SentencePiece C++ in `CMakeLists.txt` and implement `Tokenizer::encode()` / `decode()` in `src/tokenizer/tokenizer.cpp` using `models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model`.

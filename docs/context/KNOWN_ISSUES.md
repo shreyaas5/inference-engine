@@ -23,8 +23,8 @@
 - **Description:** SentencePiece C++ is not linked yet. `encode()` pushes `static_cast<int32_t>(c) + 3` per byte so M0 BOS/EOS unit tests can run without external files.
 
 ### KI-004: Offline Python Scripts (`convert_to_inference_engine.py`, `generate_golden_reference.py`) Are Stubs
-- **Status:** `PARTIALLY RESOLVED` (`convert_to_inference_engine.py` FP32, `inspect_checkpoint.py`, and `generate_golden_reference.py` binary fixture generator are **IMPLEMENTED & SELF-TESTED**; `Q4_0` conversion in `convert_to_inference_engine.py` remains `OPEN` for M2, and running `generate_golden_reference.py` on the real 2.20 GB checkpoint remains `OPEN` for M1)
-- **Evidence:** `tools/inspect_checkpoint.py` and `tools/convert_to_inference_engine.py` (commit `aa40368`) and `tools/generate_golden_reference.py` (commit `5115467`) pass `--self-test` and cross-language C++ reload tests.
+- **Status:** `RESOLVED (FOR FP32 & Q4_0 CONVERTER, INSPECTOR, AND GOLDEN BINARY PACKER; REAL 2.20 GB CHECKPOINT GOLDEN RUN PENDING)`
+- **Evidence:** `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py` (`--dtype fp32` in `aa40368` and `--dtype q4_0` / `--keep-embeddings-fp32` / `--report-error` in `cd98ae8` on `feature/model-format-q4`), and `tools/generate_golden_reference.py` (`5115467` / `6dd4fed`) pass `--self-test`, cross-language C++ `ModelLoader` reload tests, and live `TinyLlama-1.1B-Chat-v1.0` HTTP Range tensor verification.
 
 ### KI-005: `neon::dot_q4_0_f32` and `avx2::dot_q4_0_f32` Delegate to Scalar Reference
 - **Status:** `RESOLVED` (Merged into `integration` in commit `967f072`)
@@ -46,13 +46,14 @@
 - **Evidence:** Implemented explicit 1,024-element test comparing scale `d` and packed nibble bytes `qs[0..15]` block-by-block against upstream GGML quantization logic. Verified bit-exact parity in `test_quant_packing`.
 
 ### KI-010: Duplicate Tensor Binding Logic Between `TransformerEngine::init()` and `ModelLoader::bind_transformer_weights()`
-- **Status:** `OPEN — REVIEW WARNING (NON-BLOCKING FOR M1 FP32, FIX BEFORE M2)`
+- **Status:** `RESOLVED` (Fixed in commit `6dd4fed` on `feature/model-format-q4` / `bce66ae` on `feature/transformer-bindings`)
 - **Location:** [`src/transformer/transformer.cpp`](../../src/transformer/transformer.cpp), [`include/inference_engine/transformer.hpp`](../../include/inference_engine/transformer.hpp), [`include/inference_engine/loader.hpp`](../../include/inference_engine/loader.hpp)
-- **Description:** Refactor `TransformerEngine` to use `TransformerWeightBindings` (`TensorView`) before Milestone M2 so Q4_0 quantised tensors can be bound alongside FP32 norms.
+- **Evidence:** Refactored `TransformerEngine` to store `TransformerWeightBindings bindings_{}` and delegate weight validation and binding to `ModelLoader::bind_transformer_weights(&bindings_)`, supporting both `FP32` and `Q4_0` models via `TensorView` (`data_f32()` / `data_q4_0()`).
 
 ### KI-011: `generate_golden_reference.py` Decode Logit Indexing & Unchecked `gen_ref_logits` in `test_golden_forward.cpp`
-- **Status:** `OPEN — REVIEW WARNING`
+- **Status:** `PARTIALLY RESOLVED (DECODE LOGIT COMPARISON & DYNAMIC IMPORTS IMPLEMENTED IN 6dd4fed)`
 - **Location:** [`tools/generate_golden_reference.py`](../../tools/generate_golden_reference.py), [`tests/test_golden_forward.cpp`](../../tests/test_golden_forward.cpp)
+- **Evidence:** Updated `tools/generate_golden_reference.py` so `gen_logits[step]` records forward logits after appending `next_token` at `pos = prompt_len + step`, and added per-step `gen_ref_logits` verification (`max_diff <= 1e-3f`) in `tests/test_golden_forward.cpp`.
 
 ### KI-012: `TransformerEngine::forward_token()` Not Yet Wired to `dispatch_matmul_q4_0_f32`
 - **Status:** `OPEN — SCHEDULED FOR M2/M3`
@@ -63,6 +64,11 @@
 - **Status:** `OPEN — HARDWARE / CI VERIFICATION`
 - **Location:** [`src/kernels/avx2/kernels_avx2.cpp`](../../src/kernels/avx2/kernels_avx2.cpp), [`src/common/common.cpp`](../../src/common/common.cpp)
 - **Description:** The AVX2/FMA vector kernels compile cleanly and fall back gracefully on non-x86 platforms, but need execution on an x86-64 CPU (Member I's machine or GitHub Actions runner) to natively verify performance and numerical output against the hardware FMA pipeline.
+
+### KI-014: Full 2.20 GB TinyLlama Checkpoint Local Download & 22-Layer Golden Run
+- **Status:** `OPEN — REPRODUCIBLE COMMANDS & REAL-TENSOR SLICES VERIFIED`
+- **Location:** `tools/inspect_checkpoint.py`, `tools/convert_to_inference_engine.py`, `models/TinyLlama-1.1B-Chat-v1.0/`
+- **Description:** Real checkpoint tensor inventory (`201` `BF16` tensors, `2,200,096,768` payload bytes) and real-tensor `Q4_0` quantisation errors across 9 projection roles are verified via `tools/inspect_checkpoint.py --eval-real-quant-error`. `config.json` and `tokenizer.model` are downloaded locally. Full 2.20 GB `model.safetensors` download requires ~25 minutes on commodity connection (~1.5 MB/s); resume command `curl -C - -L -o models/TinyLlama-1.1B-Chat-v1.0/model.safetensors "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/model.safetensors"` is documented for full offline 22-layer execution once Member U wires `dispatch_matmul_q4_0_f32`.
 
 ---
 

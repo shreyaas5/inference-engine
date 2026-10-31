@@ -16,9 +16,10 @@
 ## Priority 1 — FP32 Checkpoint Inspection, Conversion & Loading (Owner: S, Issue `#1`)
 
 - [x] **1.1 Zero-Dependency & NumPy-Accelerated Python Converter Setup.**
-- [x] **1.2 Complete `tools/inspect_checkpoint.py` & Verify Real TinyLlama Tensor Inventory (`201/201` tensors verified).**
+- [x] **1.2 Complete `tools/inspect_checkpoint.py` & Verify Real TinyLlama Tensor Inventory (`201/201` tensors verified) + Evaluate Real `Q4_0` Error across 9 projection roles (`--eval-real-quant-error`).**
 - [x] **1.3 Implement Streaming `FP32` Conversion (`tools/convert_to_inference_engine.py`) & C++ Tensor Binding.**
-- [ ] **1.4 Download Real 2.20 GB `model.safetensors` Payload & Convert Full 4.40 GB `tinyllama-1.1b-fp32.ie`.**
+- [ ] **1.4 Download Full 2.20 GB `model.safetensors` Payload (`curl -C -`) & Convert Full `tinyllama-1.1b-fp32.ie` / `tinyllama-1.1b-q4_0.ie`:**
+  - Local metadata (`config.json`, `generation_config.json`, `tokenizer.json`, `tokenizer.model` 499 KB) downloaded in `models/TinyLlama-1.1B-Chat-v1.0/`. Resume download when full 22-layer golden run is scheduled.
 
 ---
 
@@ -45,14 +46,14 @@
 - [x] **4.1 Implement Pre-Allocated Activation Workspace & `TransformerEngine::forward_token()`:**
   - *Completed in commit `5115467` and merged to `main`.*
 - [x] **4.2 Synthetic Small-Model End-to-End & Independent NumPy Reference Test (`max_diff = 6.56e-7`).**
-- [ ] **4.3 Unify `TransformerEngine::init()` Tensor Binding with `ModelLoader::bind_transformer_weights()` (`KI-010`).**
+- [x] **4.3 Unify `TransformerEngine::init()` Tensor Binding with `ModelLoader::bind_transformer_weights()` (`KI-010` — Completed in `6dd4fed` on `feature/model-format-q4`).**
 
 ---
 
 ## Priority 5 — Real Hugging Face Golden Reference Comparison (Owners: U & S, Issue `#3`)
 
 - [x] **5.1 Implement `tools/generate_golden_reference.py` Binary Fixture Packer & Runner.**
-- [ ] **5.2 Fix Per-Step Decode Logit Indexing & Compare `gen_ref_logits` in `test_golden_forward.cpp` (`KI-011`).**
+- [x] **5.2 Fix Per-Step Decode Logit Indexing & Compare `gen_ref_logits` in `test_golden_forward.cpp` (`KI-011` — Completed in `6dd4fed`).**
 - [ ] **5.3 Execute Full 22-Layer Golden Validation Against Real `TinyLlama-1.1B-Chat-v1.0` Weights.**
 
 ---
@@ -64,7 +65,7 @@
 - [x] **6.3 Vectorized x86-64 AVX2/FMA Q4_0 & FP32 Kernels and CPUID Detection (`avx2::dot_q4_0_f32` — Merged on `integration`).**
 - [x] **6.4 Multithreaded ThreadPool Task Chunking Optimization (`ThreadPool::parallel_for` — Merged on `integration`).**
 - [ ] **6.5 Run Native Verification of AVX2/FMA Kernels on x86-64 Hardware / CI (`KI-013`).**
-- [ ] **6.6 Add `--dtype q4_0` Export to `tools/convert_to_inference_engine.py`.**
+- [x] **6.6 Add `--dtype q4_0` Export, Mixed-Precision Loader Validation & `TensorView::data_q4_0()` (`cd98ae8`, `b13baf8` on `feature/model-format-q4`).**
 - [ ] **6.7 Wire `dispatch_matmul_q4_0_f32` and `ThreadPool` into `TransformerEngine::forward_token()` (`KI-012`).**
 
 ---
