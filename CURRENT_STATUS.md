@@ -1,6 +1,6 @@
 # `CURRENT_STATUS.md` — Single Source of Truth for Project Progress
 
-**Last Updated:** 2026-10-31T19:52:00+05:30  
+**Last Updated:** 2026-10-31T23:15:00+05:30  
 **Current Milestone:** `M2 — Quantisation, SIMD & Threading` (In Progress — S's `Q4_0` Converter, Mixed-Precision Loader & Binding Consolidation complete on `feature/model-format-q4`)  
 **Maintainer:** S (Project Lead)
 
@@ -8,32 +8,32 @@
 
 ## 1. Git & Build State (Verified)
 
-- **Active Local Branch:** `feature/model-format-q4`
+- **Active Local Branch:** eature/quantisation-simd-m3
 - **Branch State Summary:**
-  - `main`: `177fe49` (`Merge branch 'integration' into main`, matches `origin/main`)
-  - `integration`: `783b8f4` (`Merge branch 'feature/quantisation-simd' into integration`, matches `origin/integration`)
-  - `feature/model-loader`: `aa40368` (matches `origin/feature/model-loader`)
-  - `feature/model-format-q4`: `6dd4fed` + M2 docs (`Q4_0` `.ie` converter, mixed-precision `ModelLoader` & `TensorView::data_q4_0()`, unified `TransformerWeightBindings` in `TransformerEngine`)
-  - `feature/transformer`: `5115467` (matches `origin/feature/transformer`)
-  - `feature/quantisation-simd`: `f76ab55` (matches `origin/feature/quantisation-simd`, merged into `integration`)
-  - `feature/runtime-tokenizer`: `cb85411`
-- **Working Tree State:** Clean (`build/` ignored).
-- **CMake Build Status:** **PASSING** (`AppleClang 17.0.0.17000603`, `CMake 4.4.3`, zero compiler warnings with `-Wall -Wextra -Wpedantic`).
-- **CTest Suite Status:** **7 / 7 PASSING** on `feature/model-format-q4` (verified on Apple M4 ARM64):
-  1. `loader_validation` — **PASSED** (15 malformed-file rejection checks + 21-tensor `FP32`, `Q4_0`, and mixed-precision `--keep-embeddings-fp32` `mmap` reload, `bind_transformer_weights()`, `TensorView::data_q4_0()` + `dispatch_matmul_q4_0_f32` verification, and `TransformerEngine::init` binding).
-  2. `quant_packing` — **PASSED** (18-byte `BlockQ4_0`, nibble packing, zero-block, out-of-bounds, subnormal/inf FP16, and bit-exact upstream GGML reference parity).
-  3. `kernels_scalar` — **PASSED** (Includes unit tests for `rmsnorm_f32`, `rope_inplace_f32`, `softmax_f32`, `swiglu_f32`, and multi-head `gqa_attention_f32`).
-  4. `kernels_simd` — **PASSED** (NEON and AVX2 scalar-fallback vector math, row-parallel multithreading scaling across 1–16 threads with task chunking).
-  5. `kv_cache` — **PASSED** (Separation of `append()` and `commit_token()`).
-  6. `tokenizer` — **PASSED** (Zephyr chat template formatting).
-  7. `golden_forward` — **PASSED** (Synthetic 2-layer `FP32` forward parity, prefill + autoregressive decode position contract, KV cache / GQA non-zero checks, and independent NumPy golden verification).
+  - main: cb85411
+  - integration: 783b8f4 (Merge branch 'feature/quantisation-simd' into integration)
+  - eature/model-format-q4: cb176b3 (S's M2 Q4_0 loader & streaming converter)
+  - eature/transformer-q4: 26b6b48 (U's M2 Q4_0 transformer forward pass & numerical validation)
+  - eature/quantisation-simd-m3: eature/quantisation-simd-m3 tracking origin/feature/quantisation-simd-m3 (integrates S & U's M2 work with Member I's native AVX2/FMA verification, persistent ThreadPool hardening with exception propagation, and microbenchmarks)
+- **Working Tree State:** Clean (uild/ ignored).
+- **Target Hardware & Toolchain:**
+  - Primary Verified Machine: AMD Ryzen 7 7745HX (Zen 4, 8 physical cores, 16 SMT threads, AVX2 + FMA), Windows 11, Clang 23.1.4 (UCRT x86_64) via LLVM-MinGW, Ninja.
+  - Cross-Architecture Tested: Apple MacBook Air M4 (ARM64 NEON).
+- **CMake Build Status:** **PASSING** (zero compiler warnings with -Wall -Wextra -Wpedantic).
+- **CTest Suite Status:** **7 / 7 PASSING** (100% pass rate in 2.18s):
+  1. loader_validation — **PASSED** (15 malformed-file rejection checks + 21-tensor FP32, Q4_0, and mixed-precision mmap reload, ind_transformer_weights(), TensorView::data_q4_0() + dispatch_matmul_q4_0_f32 verification).
+  2. quant_packing — **PASSED** (18-byte BlockQ4_0, nibble packing, zero-block, out-of-bounds, subnormal/inf FP16, and bit-exact upstream GGML reference parity).
+  3. kernels_scalar — **PASSED** (
+msnorm_f32, 
+ope_inplace_f32, softmax_f32, swiglu_f32, and multi-head gqa_attention_f32).
+  4. kernels_simd — **PASSED** (Native AVX2 & CPUID verification, Leaf 1/7 + OSXSAVE + XGETBV YMM state enabling, scalar fallback bit-exactness, multi-length dot products 32..5632, non-32B aligned loads, 5 TinyLlama projection shapes error bounds [MaxErr < 4.6e-5, RelErr < 3.1e-7], ThreadPool lifecycle/distribution up to 65536 tasks, 1000-cycle stress test, exception safety & recovery, zero-copy TensorView access, simulated mixed-precision SwiGLU MLP flow, and microbenchmarks).
+  5. kv_cache — **PASSED** (Separation of ppend() and commit_token()).
+  6. 	okenizer — **PASSED** (Zephyr chat template formatting).
+  7. golden_forward — **PASSED** (Synthetic 2-layer FP32 and Q4_0 forward pass, prompt prefill + autoregressive decode position contracts, scalar vs SIMD parity < 1e-4, single-thread vs multi-thread parity < 1e-4, and error metrics against FP32).
 - **Python Offline Tool Self-Tests:**
-  - `python3 tools/inspect_checkpoint.py --inspect-remote-hf` — **PASSED** (`201/201` `BF16` tensors in live `TinyLlama/TinyLlama-1.1B-Chat-v1.0` header verified).
-  - `python3 tools/convert_to_inference_engine.py --self-test` — **PASSED** (`FP32`, `Q4_0`, and `--keep-embeddings-fp32` streaming conversion + bit-exact GGML block parity).
-  - `python3 tools/generate_golden_reference.py --self-test` — **PASSED**
-  - `python3 tools/verify_tokenizer_parity.py --self-test` — **PASSED**
-
----
+  - python3 tools/inspect_checkpoint.py --print-frozen-contract — **PASSED**.
+  - python3 tools/convert_to_inference_engine.py --self-test — **PASSED**.
+  - python3 tools/verify_tokenizer_parity.py --self-test — **PASSED**.
 
 ## 2. Honest Implementation Breakdown
 

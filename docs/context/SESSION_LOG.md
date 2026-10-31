@@ -146,3 +146,31 @@
   - CTest test suite passed **7 / 7 (100%)**.
   - `tools/verify_transformer_q4.py` passed with bit-accurate agreement with C++ forward pass (Prefill: MaxErr=0.0503, MAE=0.0230, RMSE=0.0256; Decode: MaxErr=1.1759, MAE=0.7567, RMSE=0.8375).
   - Benchmark on synthetic model: Q4_0 SIMD prefill is ~1.7x faster than FP32 scalar (129.5 us vs 219.8 us).
+
+## Session 008 — 2026-10-31 (22:40–23:15 IST)
+- **Engineer / Agent:** I (Principal CPU Performance Engineer) + Antigravity Co-Pilot
+- **Branch:** eature/quantisation-simd-m3
+- **Objective:** Execute comprehensive Task A (Native AVX2 & CPUID verification), Task B (Kernel numerical correctness & TinyLlama shape error bounds), Task C (Persistent ThreadPool stress, distribution, lifecycle & exception safety), Task D (Reproducible multi-threaded microbenchmarks), and Task E (Transformer integration contracts & mixed-precision flow verification).
+- **Hardware Development Environment:** AMD Ryzen 7 7745HX (Zen 4, 8 physical cores, 16 SMT threads, AVX2 + FMA), Windows 11, Clang/LLVM 23.1.4 (UCRT x86_64).
+- **Files Changed:**
+  - include/inference_engine/thread_pool.hpp — Added std::exception_ptr exception_ptr_{}; to ThreadPool private state to securely catch worker thread exceptions (ADR-009).
+  - src/kernels/threading/thread_pool.cpp — Added 	ry ... catch (...) exception capture blocks around worker and calling-thread task loops, preventing unhandled exceptions from terminating processes, ensuring proper worker drain before rethrowing on calling thread.
+  - 	ests/test_kernels_simd.cpp — Implemented comprehensive validation and benchmark suites:
+    - Task A: Native hardware CPUID leaf 1 (OSXSAVE, AVX, FMA), leaf 7 (AVX2), OS XMM/YMM state enabling via safe_xgetbv(0), runtime is_backend_available(Avx2) and detect_best_backend(), and bit-exact scalar fallback across dot and matmul functions.
+    - Task B: Q4_0 dot products across lengths 32..5632, activation distributions (positive, negative, zero, large scale, subnormal floats), misaligned memory pointer offsets (0, 1, 2, 3, 5, 7 floats), and numerical error metrics across all 5 TinyLlama projection shapes (256x2048, 2048x2048, 5632x2048, 2048x5632, 32000x2048) with MaxAbsErr < 4.6e-5 and RelErr < 3.1e-7.
+    - Task C: ThreadPool lifecycle (1..16 threads), task distribution exactness across counts 0..65536, 1,000 rapid successive cycles stress testing (32,000 tasks total), and exception safety & recovery.
+    - Task E: Zero-copy TensorView::data_q4_0() access and simulated mixed-precision SwiGLU MLP projection flow ( \in \mathbb{R}^{2048} \to W_{\text{gate}} \to W_{\text{up}} \to \text{SwiGLU} \to W_{\text{down}} \to y \in \mathbb{R}^{2048}$).
+    - Task D: Full microbenchmark reporting median latency, GFLOPS, memory bandwidth, and thread scaling (1, 2, 4, 8, 16 threads) for FP32 and Q4_0.
+  - DECISIONS.md — Added ADR-009 (Dynamic Task Chunking and Exception Propagation in Persistent ThreadPool).
+  - docs/context/KNOWN_ISSUES.md — Marked KI-013 as RESOLVED.
+  - docs/context/IMPLEMENTATION_STATUS.md — Updated SIMD AVX2 and ThreadPool status to TESTED (NATIVE X86-64 RYZEN 7 7745HX).
+  - docs/context/NEXT_ACTIONS.md — Checked off item 6.5.
+- **Verification Results:**
+  - Build: Clang 23.1.4 C++17 Release build succeeded with 0 warnings.
+  - CTest Test Suites: **7 / 7 passed (100%)** in 2.18s.
+  - Microbenchmark Results (AMD Ryzen 7 7745HX):
+    - Matmul FP32 ( \times 2048$): Scalar (1T) = 2.52 ms $\to$ AVX2 (1T) = 0.44 ms (5.69x) $\to$ AVX2 (8T) = **0.09 ms** (**27.32x** speedup).
+    - Matmul Q4_0 ( \times 2048$ Attention): Scalar (1T) = 1.28 ms $\to$ AVX2 (1T) = 0.34 ms (3.72x) $	o$ AVX2 (8T) = **0.08 ms** (**16.79x**, **110.38 GFLOPS**, **28.91 GB/s**).
+    - Matmul Q4_0 ( \times 2048$ Gate/Up): Scalar (1T) = 3.50 ms $\to$ AVX2 (16T) = **0.21 ms** (**17.05x**, **112.37 GFLOPS**, **29.43 GB/s**).
+    - Matmul Q4_0 ( \times 5632$ Down): Scalar (1T) = 3.69 ms $\to$ AVX2 (16T) = **0.18 ms** (**20.07x**, **125.51 GFLOPS**, **32.88 GB/s**).
+    - Matmul Q4_0 ( \times 2048$ LM Head): Scalar (1T) = 19.92 ms $\to$ AVX2 (16T) = **1.05 ms** (**18.98x**, **124.85 GFLOPS**, **32.70 GB/s**).

@@ -1,52 +1,64 @@
-# `SESSION_HANDOFF.md` — Immediate Continuation Instructions
+# SESSION_HANDOFF.md — Immediate Continuation Instructions
 
-**Last Updated:** 2026-10-31T19:52:00+05:30  
-**Last Session Role:** Principal C++ Systems Engineer & Inference-Runtime Architect (Member S — M2: Quantised Model Format, Checkpoint Converter & Loader Integration on `feature/model-format-q4`)
-
----
-
-## 1. What We Did in This Session (Session 006)
-
-1. **Created Dedicated Branch `feature/model-format-q4` from `origin/integration` (`783b8f4`):**
-   - Left `main` (`177fe49`), `integration` (`783b8f4`), and `feature/model-loader` (`aa40368`) untouched.
-2. **Implemented Task A — Streaming `Q4_0` `.ie` Model Export & Error Metrics (`tools/convert_to_inference_engine.py`, `tools/inspect_checkpoint.py`):**
-   - Added `--dtype q4_0`, `--input` (accepting either a `.safetensors` file or checkpoint directory), `--config`, `--keep-embeddings-fp32`, and `--report-error` (`MAE`, `RMSE`, `MaxAbsErr`, `RelL2`).
-   - Implemented bit-exact IEEE 754 `fp32_to_fp16` and 32-element `BlockQ4_0` packing (vectorized NumPy + pure-Python fallback) matching `src/kernels/quant_q4_0.cpp` and upstream GGML `Q4_0` bit-for-bit (`KI-004` `Q4_0` export resolved).
-   - Enforced mixed-precision policy (`ADR-008`): all 45 1D RMSNorm tensors remain `DataType::FP32` (`368,640` B), while all 156 2D weight matrices default to `DataType::Q4_0` (`618,725,376` B, producing a **`619,113,472`-byte / `619.11 MB`** `.ie` file for `TinyLlama-1.1B-Chat-v1.0`, a $7.11\times$ reduction vs `FP32`).
-   - Verified `Q4_0` quantisation error metrics on real `TinyLlama-1.1B-Chat-v1.0` attention projection tensors fetched via HTTP Range (`k_proj.weight`: `MAE = 2.592e-03`, `RMSE = 4.085e-03`; `v_proj.weight`: `MAE = 8.170e-04`, `RMSE = 9.958e-04`).
-3. **Implemented Task B — `TensorView` `Q4_0` Accessors & Mixed-Precision `ModelLoader` Validation (`include/inference_engine/tensor.hpp`, `src/loader/loader.cpp`):**
-   - Added `TensorView::data_q4_0()` (`const BlockQ4_0*`), `name()`, `dtype()`, `ndim()`, `shape()`, `payload_offset()`, `payload_nbytes()`, `num_elements()`, and `num_blocks()`.
-   - Extended `ModelLoader::load_from_buffer` and `ModelLoader::bind_transformer_weights` to validate mixed-precision `Q4_0` models (both all-2D-`Q4_0` and `--keep-embeddings-fp32` variants) and verified `dispatch_matmul_q4_0_f32` directly on bound `TensorView` weights in `tests/test_loader_validation.cpp`.
-4. **Implemented Task C — Unified `TransformerWeightBindings` with `TransformerEngine` (`include/inference_engine/transformer.hpp`, `src/transformer/transformer.cpp`):**
-   - Replaced private `LayerWeights` and duplicate `bind_tensor()` logic in `TransformerEngine` with `TransformerWeightBindings bindings_{}` and `loader->bind_transformer_weights(&bindings_)` (`KI-010` resolved), and incorporated decode logit verification in `tests/test_golden_forward.cpp` (`KI-011`).
+**Last Updated:** 2026-10-31T23:15:00+05:30  
+**Last Session Role:** Principal CPU Performance Engineer (Member I — Task A/B/C/D/E Native AVX2, Kernel Numerical Error Bounds, ThreadPool Hardening & Microbenchmarks on eature/quantisation-simd-m3)
 
 ---
 
-## 2. What Is Currently Working on `feature/model-format-q4` (Verified)
+## 1. What We Did in This Session (Session 008)
 
-- **Model Loader, Mixed-Precision Validator & Converter (S):** Full `.ie` v1 binary parser, `mmap` zero-copy loader, 201-tensor validation, streaming `BF16 -> FP32` and `BF16 -> Q4_0` converter, `TensorView::data_f32()` / `data_q4_0()`, and unified `TransformerWeightBindings` across `ModelLoader` and `TransformerEngine`.
-- **Scalar Transformer & Causal GQA (U):** Full 16-step `FP32` forward pass, GQA attention kernel, KV cache commit separation, independent NumPy parity verified.
-- **Quantisation & SIMD Kernels (I):**
-  - Q4_0 block packing/dequantisation with verified GGML bit-exact reference parity.
-  - ARM64 NEON Q4_0 & FP32 dot/matmul kernels verified natively.
-  - x86-64 AVX2/FMA Q4_0 & FP32 kernels implemented and guarded with runtime CPU feature detection.
-  - Persistent ThreadPool with dynamic task chunking.
-  - Dispatched matmul: `dispatch_matmul_q4_0_f32` and `dispatch_matmul_f32`.
+1. **Integrated Remote Feature Branches:**
+   - Checked out eature/quantisation-simd-m3 tracking origin/feature/quantisation-simd-m3.
+   - Integrated S and U's latest M2 deliverables (origin/feature/transformer-q4 at 26b6b48), providing full end-to-end Q4_0 model loading and quantised forward execution.
+2. **Executed Task A — Native AVX2 & CPUID Verification:**
+   - Added native CPU feature detection verification (	est_native_cpu_features() in 	ests/test_kernels_simd.cpp).
+   - Verified Leaf 1 (OSXSAVE, AVX, FMA), Leaf 7 Subleaf 0 (AVX2), and OS XMM/YMM context switch enablement via safe_xgetbv(0).
+   - Verified is_backend_available(SimdBackend::Avx2) == true and detect_best_backend() == SimdBackend::Avx2 on native AMD Ryzen 7 7745HX.
+   - Tested and verified explicit scalar fallback via dispatch_dot_q4_0_f32, dispatch_dot_f32, dispatch_matmul_q4_0_f32, and dispatch_matmul_f32 with SimdBackend::Scalar, proving exact bit-identity against the scalar oracle.
+3. **Executed Task B — Kernel Numerical Correctness & TinyLlama Error Metrics:**
+   - Validated multi-length Q4_0 dot products across lengths 32..5632.
+   - Validated activation distributions (positive, negative, zero, large scale, subnormal floats).
+   - Validated non-32-byte aligned pointer loads (offsets 0, 1, 2, 3, 5, 7 floats) without memory faults or divergence.
+   - Evaluated numerical error metrics across all 5 key TinyLlama projection shapes:
+     - Attention KV Slice ( \times 2048$): MaxErr = .144 \times 10^{-5}$, RelErr = .964 \times 10^{-7}$
+     - Attention Q/K/V/O ( \times 2048$): MaxErr = .907 \times 10^{-5}$, RelErr = .149 \times 10^{-7}$
+     - SwiGLU Gate/Up ( \times 2048$): MaxErr = .907 \times 10^{-5}$, RelErr = .069 \times 10^{-7}$
+     - SwiGLU Down ( \times 5632$): MaxErr = .578 \times 10^{-5}$, RelErr = .064 \times 10^{-7}$
+     - LM Head Vocab ( \times 2048$): MaxErr = .289 \times 10^{-5}$, RelErr = .087 \times 10^{-7}$
+   - All errors are well within the theoretical FMA vs non-FMA contraction bound ($< 3 \times 10^{-4}$).
+4. **Executed Task C — Persistent ThreadPool Verification & Exception Safety (ADR-009):**
+   - Added std::exception_ptr exception_ptr_{}; to ThreadPool in include/inference_engine/thread_pool.hpp and src/kernels/threading/thread_pool.cpp.
+   - Wrapped task execution loops in 	ry ... catch (...), ensuring exceptions in worker threads do not crash the process or leave threads unjoined, gracefully drain remaining workers, and rethrow cleanly on the calling thread.
+   - Verified worker lifecycle (1, 2, 4, 8, 16 threads), exact task distribution across counts 0..65536, 1,000 rapid successive cycles stress testing (32,000 tasks total), and exception safety & recovery.
+5. **Executed Task E — Transformer Integration Contracts & Mixed-Precision Flow:**
+   - Validated zero-copy TensorView::data_q4_0() access without heap allocations or FP32 dequantisation.
+   - Validated full simulated mixed-precision SwiGLU MLP projection flow ( \in \mathbb{R}^{2048} \to W_{\text{gate}} \to W_{\text{up}} \to \text{SwiGLU} \to W_{\text{down}} \to y \in \mathbb{R}^{2048}$).
+6. **Executed Task D — Microbenchmarks on AMD Ryzen 7 7745HX:**
+   - Matmul FP32 ( \times 2048$): Scalar 1T = 2.52 ms $\to$ AVX2 1T = 0.44 ms (5.69x) $\to$ AVX2 8T = **0.09 ms** (**27.32x** speedup).
+   - Matmul Q4_0 ( \times 2048$ Attention): Scalar 1T = 1.28 ms $\to$ AVX2 1T = 0.34 ms (3.72x) $\to$ AVX2 8T = **0.08 ms** (**16.79x**, **110.38 GFLOPS**, **28.91 GB/s**).
+   - Matmul Q4_0 ( \times 2048$ Gate/Up): Scalar 1T = 3.50 ms $\to$ AVX2 16T = **0.21 ms** (**17.05x**, **112.37 GFLOPS**, **29.43 GB/s**).
+   - Matmul Q4_0 ( \times 5632$ Down): Scalar 1T = 3.69 ms $\to$ AVX2 16T = **0.18 ms** (**20.07x**, **125.51 GFLOPS**, **32.88 GB/s**).
+   - Matmul Q4_0 ( \times 2048$ LM Head): Scalar 1T = 19.92 ms $\to$ AVX2 16T = **1.05 ms** (**18.98x**, **124.85 GFLOPS**, **32.70 GB/s**).
+7. **Resolved Issues & Updated Decisions:**
+   - Marked KI-013 (Native x86-64 AVX2/FMA Verification Pending) as RESOLVED.
+   - Recorded ADR-009 (Dynamic Task Chunking and Exception Propagation in Persistent ThreadPool).
 
 ---
 
-## 3. What Remains Pending / Important Limitations
+## 2. Current State of the Codebase
 
-- **TransformerEngine Q4_0 Forward Execution (`KI-012`):** `TransformerEngine::init` now validates and binds both `FP32` and `Q4_0` models into `bindings_`, while `TransformerEngine::forward_token` executes `FP32` scalar kernels and returns `StatusCode::NotImplemented` on `Q4_0` models until `dispatch_matmul_q4_0_f32` and `Q4_0` embedding row dequantisation are wired into `forward_token()`.
-- **Full 2.20 GB TinyLlama Checkpoint Download & Execution:** Live header and real `k_proj`/`v_proj` tensor slices are verified, but downloading the full 2.20 GB `model.safetensors` locally and running 22-layer inference on real weights remains pending.
-- **AVX2/FMA Native Verification (`KI-013`):** Requires testing on an x86-64 CPU (Member I's machine or GitHub Actions runner).
-- **SentencePiece C++ Tokenizer (P — `KI-003`):** `src/tokenizer/tokenizer.cpp` still uses the M0 byte-offset stub.
+- **Build:** Clean C++17 build under Clang 23.1.4 (LLVM-MinGW) and AppleClang with -Wall -Wextra -Wpedantic (0 warnings).
+- **CTest:** 7 / 7 test suites pass (100% pass rate).
+- **Python Tools:** inspect_checkpoint.py, convert_to_inference_engine.py, and erify_tokenizer_parity.py pass all self-tests.
+- **Git Branch:** eature/quantisation-simd-m3 on origin.
 
 ---
 
-## 4. Next Task
+## 3. Next Actions for Collaborators
 
-- **Merge `feature/model-format-q4` into `integration` and Wire `Q4_0` Execution in `TransformerEngine::forward_token()` (Owners: U & S):**
-  - Use `bindings_.embed_tokens.data_q4_0()` (`dequantize_row_q4_0`) and `dispatch_matmul_q4_0_f32` inside `TransformerEngine::forward_token()` when `config_.weight_dtype == DataType::Q4_0`.
-- **For Member P (`feature/runtime-tokenizer` — Issue `#4`):**
-  - Integrate SentencePiece C++ and wire the CLI generation loop in `src/app/main.cpp`.
+1. **Member P (Runtime Tokenizer):**
+   - Complete SentencePiece C++ integration in src/tokenizer/tokenizer.cpp (Issue #4).
+2. **Member S (Model Loader / Project Lead):**
+   - Create PR to merge eature/quantisation-simd-m3, eature/transformer-q4, and eature/model-format-q4 into integration.
+3. **Team Integration:**
+   - Execute full 22-layer end-to-end benchmark against real TinyLlama-1.1B-Chat-v1.0 weights on commodity hardware.
