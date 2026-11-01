@@ -1,10 +1,10 @@
 # `CURRENT_STATUS.md` — Single Source of Truth for Project Status
 
-> **Last Updated:** 2026-11-01T14:35:00+05:30  
-> **Current Active Branch:** `integration/m4-full-inference`  
-> **Consolidated Integration Baseline:** `integration/m4-full-inference` (HEAD: `244f78a` + M8 Emergency Pitch Finalisation, branched from `main` at `5657d9278b2f59e1f1ae0605baf1543cb860fde7`)  
-> **Protected / Shared Baselines:** `main` (`5657d92`), `origin/integration` (`783b8f4`), PR #6 open  
-> **Integrated Feature Branches (All Feature Branches Fully Merged / Superseded):**  
+> **Last Updated:** 2026-11-01T15:05:00+05:30  
+> **Current Active Branch:** `main` (HEAD: `3cf3881`, clean working tree)  
+> **Consolidated Integration Baseline:** `main` (`3cf3881` — PR #6 successfully merged)  
+> **Protected / Shared Baselines:** `main` (`3cf3881`), `origin/main` (`3cf3881`), PR #6 merged  
+> **Integrated Feature Branches (All Feature Branches Fully Merged & Closed):**  
 > - Member U: `origin/feature/transformer-runtime` (`fb6420b` — RoPE precomputation, `forward_prompt` API, real TinyLlama E2E validation)  
 > - Member I: `origin/feature/cpu-kernel-optimisation` (`cb8f08d` — AVX2 & NEON 2-row tiling, vectorized scale accumulation, adaptive ThreadPool chunking, `inference_engine_bench` runner, `ADR-012`)  
 > - Member P: `origin/feature/runtime-tokenizer` (`eaaeceb` — Streaming CLI detokenisation, `--bench-runs`, CI setup-python, CLI integration test)  
@@ -66,6 +66,6 @@
 
 ## 3. Top 3 Project Priorities
 
-1. **Priority 1 (`P0` — PR #6 Review & Merge):** Final review and merge of PR #6 into `main`.
+1. **Priority 1 (`P0` — Main Baseline Consolidated):** PR #6 successfully merged into `main` (`3cf3881`), 100% green CI on Linux and macOS.
 2. **Priority 2 (`P1` — AVX2/x86_64 Benchmark Sweep):** Run multi-run benchmark suite across team x86_64 laptops for cross-hardware matrix completion.
 3. **Priority 3 (`P2` — BIOS V2 PS08 Submission):** Final packaging and presentation materials for competition evaluation.
