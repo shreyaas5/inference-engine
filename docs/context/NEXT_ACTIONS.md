@@ -1,7 +1,7 @@
 # `NEXT_ACTIONS.md` — Dependency-Ordered Engineering Backlog
 
-**Last Updated:** 2026-10-31
-**Current Phase:** Milestone M1 (`m1-fp32`); P is implementing tokenizer/runtime on `feature/runtime-tokenizer`, based on `integration` at `783b8f4`
+**Last Updated:** 2026-11-01
+**Current Phase:** Milestone M1 (`m1-fp32`); M7 validation is blocked by the local CMake/C++ toolchain, on `feature/runtime-tokenizer` at `eaaeceb`
 
 ---
 
@@ -73,5 +73,6 @@
 
 ## Priority 7 — CLI, Four-Laptop Benchmarking & `llama.cpp` Comparison (Owner: P & All, Milestone M4)
 
-- [ ] **7.1 Validate the FP32 generation CLI and `--benchmark` harness (`src/app/main.cpp` implementation is in the working tree; build/real-model validation pending).**
+- [ ] **7.1 Validate the FP32 generation CLI and `--benchmark` harness (`src/app/main.cpp` implementation is in the working tree; build/real-model validation pending; current CMake install is incomplete and MinGW 6.3 lacks `<string_view>`).**
 - [ ] **7.2 Run Standardized CPU Benchmarks on All 4 Laptops (S, I, U, P) and Compare Against `llama.cpp`.**
+- [ ] **7.3 Complete M7 runtime validation: build and run all 9 CTest suites, full Hugging Face tokenizer parity, CLI errors/context limits, and KV-cache behavior.**

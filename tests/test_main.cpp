@@ -33,6 +33,7 @@ int main(int argc, char** argv) {
         {"kv_cache", run_kv_cache_tests},
         {"tokenizer", run_tokenizer_tests},
         {"sampler", run_sampler_tests},
+        {"golden_forward", run_golden_forward_tests},
         {"cli_integration", run_cli_integration_test},
     };
 

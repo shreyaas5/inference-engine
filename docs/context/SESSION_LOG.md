@@ -127,3 +127,18 @@
 - **Remaining Work:**
   - Run the configured CI build and fix any failures; confirm all 8 CTest suites and full tokenizer parity pass.
   - Run the CLI against an actual converted FP32 TinyLlama checkpoint with S/U. No real inference or benchmark performance is claimed yet.
+
+## Session 007 — 2026-11-01 (M7 — Testing & CLI Validation)
+
+- **Objective:** Execute the requested CTest, Python, tokenizer parity, CLI, boundary, and KV-cache validation without adding features or refactoring.
+- **Repository State:** Clean at start on `feature/runtime-tokenizer` (`eaaeceb`). No commit or push.
+- **Fix:** CMake registered `golden_forward`, but `tests/test_main.cpp` did not dispatch it. Added the missing suite mapping after user authorization; native execution is still pending.
+- **Validation:**
+  - `python tools/inspect_checkpoint.py --print-frozen-contract` — **PASS**.
+  - `python tools/inspect_checkpoint.py --inspect-remote-hf` — **PASS**, all 201 tensor descriptors verified against the remote metadata.
+  - `python tools/convert_to_inference_engine.py --self-test` — **PASS**.
+  - `python tools/verify_tokenizer_parity.py --self-test` — **PASS** (offline chat-template assertion only).
+  - CMake configure attempted; failed because `CMAKE_ROOT` modules are missing. CMake Tools build returned `-1`; test discovery returned no tests; Run CTest reported “Build failed.”
+  - MinGW GCC 6.3 probe failed to include `<string_view>`. Full CTest (9 suites), model-backed Hugging Face parity, and CLI runtime scenarios were **NOT RUN**.
+  - CLI binary, tokenizer/model assets, and Python `transformers`/`sentencepiece` dependencies are absent. Source inspection found no interactive slash-command loop. Context/KV behavior was reviewed in tests/source, not executed.
+- **Remaining Work:** Configure a complete CMake/C++17 toolchain and assets/dependencies, then execute all runtime checks. Do not claim any unexecuted CTest or CLI scenario passed.

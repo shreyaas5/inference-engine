@@ -1,7 +1,7 @@
 # `IMPLEMENTATION_STATUS.md` — Module-by-Module Truth Table
 
-**Last Updated:** 2026-10-31
-**Branch:** `feature/runtime-tokenizer` (local branch fast-forwarded to `origin/integration` at `783b8f4`; P changes remain unverified)
+**Last Updated:** 2026-11-01
+**Branch:** `feature/runtime-tokenizer` at `eaaeceb` (based on `origin/integration` at `783b8f4`; full build/CTest remains unverified)
 
 Allowed Status Labels:
 - `NOT STARTED` — No implementation exists yet (or CLI argument parser skeleton only).
@@ -32,3 +32,4 @@ Allowed Status Labels:
 | **Tokenizer & Chat Template** | `include/inference_engine/tokenizer.hpp`, `src/tokenizer/tokenizer.cpp`, `tools/verify_tokenizer_parity.py` | Yes | Yes (SentencePiece C++ and exact special-token splitting) | Pending model-backed `tokenizer` CTest | Pending | No | `IMPLEMENTED` | CMake uses SentencePiece >=0.2.0 from pkg-config or a pinned upstream revision. The CI path downloads the pinned TinyLlama tokenizer model/config and runs the Hugging Face parity tool. Full build and model-backed parity have not run in this session. |
 | **Sampler** | `include/inference_engine/sampler.hpp`, `src/sampler/sampler.cpp`, `tests/test_sampler.cpp` | Yes | Yes (greedy, temperature, top-p, seeded RNG, invalid-logit filtering) | Focused MinGW test passed; CTest pending | Yes (synthetic logits) | N/A | `TESTED (SYNTHETIC)` | Standalone compilation with `-Wall -Wextra -Wpedantic` and deterministic sampling tests passed; the full CMake suite remains unrun. |
 | **CLI Application & Benchmark Runner** | `src/app/main.cpp` | Yes | Yes (FP32 prefill/decode, EOS, flags, single-run metrics) | Pending | No | No | `IMPLEMENTED` | Implements the documented position flow and benchmark measurements. `--threads > 1` warns because the current Transformer ignores thread count. Real model inference and timing remain unverified. |
+| **CTest Suite Dispatcher** | `CMakeLists.txt`, `tests/test_main.cpp` | Yes | Yes (all 9 CMake suite names dispatched) | Not run (native build blocked) | N/A | N/A | `IMPLEMENTED` | Added the missing `golden_forward` dispatch; no runtime test result is claimed. |

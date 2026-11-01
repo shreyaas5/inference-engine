@@ -1,6 +1,6 @@
 # `CURRENT_STATUS.md` — Single Source of Truth for Project Progress
 
-**Last Updated:** 2026-10-31
+**Last Updated:** 2026-11-01
 **Current Milestone:** `M1 — FP32 scalar inference` (P's tokenizer/runtime work in progress on `feature/runtime-tokenizer`; S, U, and I work is available on `integration`)
 **Maintainer:** S (Project Lead)
 
@@ -8,7 +8,7 @@
 
 ## 1. Git & Build State (Verified)
 
-- **Active Local Branch:** `feature/runtime-tokenizer` at `783b8f4` (fast-forwarded to `origin/integration`; nine commits ahead of `origin/feature/runtime-tokenizer`).
+- **Active Local Branch:** `feature/runtime-tokenizer` at `eaaeceb` (based on `origin/integration` at `783b8f4`).
 - **Branch State Summary:**
   - `main`: `177fe49` (`Merge branch 'integration' into main`)
   - `feature/model-loader`: `aa40368` (matches `origin/feature/model-loader`)
@@ -17,8 +17,8 @@
   - `integration`: `783b8f4` (latest fetched integration tip).
   - `origin/feature/runtime-tokenizer`: `cb85411`; this local feature branch is based on `783b8f4`.
 - **Working Tree State:** P's tokenizer/sampler/CLI changes and related docs are uncommitted; no model assets are tracked.
-- **Local Build Status:** **NOT VERIFIED.** CMake/CTest are unavailable in this Windows environment, and the available MinGW standard library lacks `<string_view>`. The CMake Tools build returned `-1` without output and the diagnostics panel was empty.
-- **Latest Baseline CTest:** **7 / 7 PASSING** on the upstream integration branch before P's changes. The current tree now defines 8 suites (adds `sampler`); it has not yet been run as a full CTest build.
+- **Local Build Status:** **NOT VERIFIED.** The installed CMake executable is missing its `share/cmake-4.4` modules, CMake Tools returned `-1` without output, and MinGW GCC 6.3 lacks `<string_view>`. No CTest suites were executed in this session.
+- **Latest Baseline CTest:** **7 / 7 PASSING** on the upstream integration branch before P's changes. The current tree defines 9 suites; `golden_forward` dispatch was added to `tests/test_main.cpp`, but the full CTest build remains unverified.
   Prior baseline suites:
   1. `loader_validation` — **PASSED** (12 malformed-file rejection checks + 21-tensor `mmap` reload, `bind_transformer_weights()`, and bit-exact `FP32` data preservation).
   2. `quant_packing` — **PASSED** (18-byte `BlockQ4_0`, nibble packing, zero-block, out-of-bounds, subnormal/inf FP16, and bit-exact upstream GGML reference parity).
@@ -28,9 +28,10 @@
   6. `tokenizer` — **PASSED** (Zephyr chat template formatting).
   7. `golden_forward` — **PASSED** (Synthetic 2-layer `FP32` forward parity, prefill + autoregressive decode position contract, KV cache / GQA non-zero checks, and independent NumPy golden verification).
 - **Validation Run in This Session:**
-  - `tools/verify_tokenizer_parity.py` syntax check and `--self-test` — **PASSED**.
-  - `sampler.cpp` + `test_sampler.cpp` compiled with MinGW `-Wall -Wextra -Wpedantic` and ran — **PASSED**.
-  - Full CMake/CTest and real Hugging Face/C++ tokenizer parity — **NOT RUN** (CMake unavailable; CI is configured to run both).
+  - `python tools/inspect_checkpoint.py --print-frozen-contract`, `--inspect-remote-hf`, `python tools/convert_to_inference_engine.py --self-test`, and `python tools/verify_tokenizer_parity.py --self-test` — **PASSED**; live HF inspection verified 201/201 tensor descriptors.
+  - Full CMake/CTest — **NOT RUN**: CMake configure failed because `CMAKE_ROOT` modules are missing; CMake Tools build returned `-1`, test discovery was empty, and CTest reported build failed. MinGW GCC 6.3 also failed a C++17 `<string_view>` probe.
+  - Model-backed Hugging Face/C++ parity and CLI runtime checks — **NOT RUN**: executable, tokenizer assets, `transformers`, and Python `sentencepiece` are absent.
+  - Found and fixed the missing `golden_forward` suite dispatch in `tests/test_main.cpp`; native build/runtime validation of the fix remains pending.
 - **Previously Reported Python Offline Tool Self-Tests:**
   - `python3 tools/inspect_checkpoint.py --inspect-remote-hf` — **PASSED** (`201/201` `BF16` tensors in live `TinyLlama/TinyLlama-1.1B-Chat-v1.0` header verified).
   - `python3 tools/convert_to_inference_engine.py --self-test` — **PASSED**
@@ -86,6 +87,6 @@
 
 ## 4. Next Three Engineering Priorities
 
-1. **[Owner: P — Issue #4] Build and validate SentencePiece integration, run full tokenizer parity, then verify the CLI with real FP32 weights when available.**
-2. **[Owners: S & U — Issues #1 & #3] Download Real `TinyLlama-1.1B-Chat-v1.0` Checkpoint, Convert to `.ie` FP32, and Run `tools/generate_golden_reference.py` + `golden_forward` CTest.**
-3. **[Owners: I & U — Milestone M2] Enable `Q4_0` Dispatch in `TransformerEngine::forward_token()` and Add `--dtype q4_0` Export to `tools/convert_to_inference_engine.py`.**
+1. **[Owner: P — Issue #4] Configure a complete C++17/CMake toolchain, run all 9 CTest suites, and complete model-backed tokenizer parity.**
+2. **[Owner: P] Build the CLI and validate its supported one-shot/error/context behaviors; interactive slash commands are not implemented.**
+3. **[Owners: S & U — Issues #1 & #3] Convert the real TinyLlama checkpoint and run `golden_forward` against real weights.**

@@ -1,6 +1,6 @@
 # `KNOWN_ISSUES.md` — Active Bugs, Stubs, Assumptions & Risks
 
-**Last Updated:** 2026-10-31T19:25:00+05:30  
+**Last Updated:** 2026-11-01T14:04:00+05:30
 *(Policy: Never delete an entry silently. When an issue is fixed, change its status to `RESOLVED` and cite the commit/test evidence.)*
 
 ---
@@ -78,4 +78,9 @@
 ### KI-014: Full Feature-Branch Build and Parity Run Not Yet Available Locally
 - **Status:** `OPEN — ENVIRONMENT VALIDATION BLOCKER`
 - **Location:** `CMakeLists.txt`, `.github/workflows/ci.yml`
-- **Description:** The local CMake Tools build returned `-1` without output and no CMake diagnostics were reported; CMake and CTest are not on PATH. The available MinGW standard library also lacks `<string_view>`, so it cannot compile the full C++17 project. The focused sampler test and parity script's offline self-test passed, but the complete build, model-backed CTest, Hugging Face parity, and real TinyLlama inference must be validated in CI or a configured development environment.
+- **Description:** The installed `C:\Program Files\CMake\bin\cmake.exe` cannot find its `share/cmake-4.4` modules; CMake Tools returns `-1` without diagnostics. MinGW GCC 6.3 lacks `<string_view>`. The complete build/CTest, model-backed parity, and CLI runtime tests remain pending a configured environment. Python `transformers`/`sentencepiece`, tokenizer assets, executable, and real model are also absent.
+
+### KI-015: `golden_forward` CTest Was Not Dispatched by the Test Runner
+- **Status:** `RESOLVED IN SOURCE — NATIVE CTEST VALIDATION PENDING`
+- **Location:** `CMakeLists.txt`, `tests/test_main.cpp`
+- **Evidence:** CMake already registered nine test names, including `golden_forward`, while the C++ runner omitted that name. Added `{"golden_forward", run_golden_forward_tests}` to the runner. CMake could not configure and CTest did not execute, so runtime verification remains pending.
