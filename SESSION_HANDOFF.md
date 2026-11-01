@@ -1,26 +1,32 @@
 # `SESSION_HANDOFF.md` — Session-to-Session Continuation
 
-> **Date:** 2026-11-01T14:45:00+05:30  
+> **Date:** 2026-11-01T15:00:00+05:30  
 > **Active Branch:** `integration/m4-full-inference`  
 > **Base Branch:** `main`  
-> **Status:** **M9 PITCH TECHNICAL MASTERY & DEFENSE MANUALS COMPLETE — READY FOR EVALUATION**
+> **Status:** **ALL SYSTEMS GO — STUDIO INVISIBLE TEXT BUG RESOLVED — LIVE DEMO READY**
 
 ---
 
-## 1. Summary of Changes in this Session (Milestone M9 — Pitch Mastery Sprint)
+## 1. Summary of Changes in this Session (Session 022 — Studio Text Streaming Fix)
 
-1. **Master Technical Guide (`docs/PITCH_TECHNICAL_MASTERY.md`):**
-   - Completed 11 exhaustive chapters explaining project scope, the 15-stage end-to-end inference pipeline from raw prompt to detokenized character, TinyLlama architecture and tensor calculations, `Q4_0` 18-byte block quantization mathematics and dequantization fusion, the custom `.ie` v1 64-byte aligned binary format and zero-copy `mmap` loader, CPU SIMD vector optimizations (NEON, AVX2/FMA, 2-row register tiling, vectorized scale accumulation, ThreadPool task chunking), KV-cache commit contracts and conversational prefix-matching, Inference Studio persistent worker architecture, benchmark methodology and empirical M8 results, and consolidated ADR trade-off defense.
-2. **Subsystem Source Code Walkthrough (`docs/PITCH_CODE_WALKTHROUGH.md`):**
-   - Granular subsystem guide for ModelLoader, Quantization, TensorView, TransformerEngine 16-step forward pass, Causal GQA Attention, KvCache, CPU SIMD kernels, ThreadPool, Tokenizer/Sampler, Studio Worker, Node.js Gateway, and React 19 Observability Studio with exact source paths, execution chains, and verbatim code excerpts.
-3. **Judge Question Bank (`docs/PITCH_JUDGE_QUESTIONS.md`):**
-   - 65 technical questions organized across basic concepts, architecture, math, implementation, performance, critical engineering, and adversarial judge challenges, providing 20-second elevator summaries, deep proofs, source references, and follow-up defenses.
-4. **Team Pitch Crash Course (`docs/PITCH_TEAM_CRASH_COURSE.md`):**
-   - 2-hour 15-minute rehearsal manual with explicit speaker ownership mapping (Members S, I, U, P), 30-min overview, 60-min deep walkthrough, 30-min judge drill, and 15-min whiteboard diagrams.
-5. **Full Validation:**
-   - 9/9 CTest test suites pass 100% (2.16s).
-   - Python offline tool self-tests pass (converter, tokenizer parity contract).
-   - Zero modifications to production inference code; zero warnings on build.
+1. **Root Cause Analysis of Invisible Text:**
+   - In commit `244f78a`, `src/app/studio_worker.hpp` emitted token deltas in property `"delta"`, but `studio/src/App.tsx` read `const text = event.text || '';`. Since `event.text` was `undefined`, it appended `""` to `msg.content` on every token while updating `msg.metrics`.
+   - On `generation_completed`, `msg.content` was never assigned `event.text`, leaving the bubble completely blank while displaying the metrics bar.
+   - Static asset caching (`max-age=31536000`) in `studio/server/index.ts` risked browsers keeping the old JS bundle across reloads.
+2. **Dual-Property C++ Worker Output (`src/app/studio_worker.hpp`):**
+   - Emits both `"delta"` and `"text"` on token events for universal client compatibility.
+3. **Frontend Robust Token & Completion Parsing (`studio/src/App.tsx`):**
+   - Reads `const chunk = event.delta !== undefined ? event.delta : (event.text || '');`.
+   - Fallbacks to assistant message targeting by ID or last assistant item in state.
+   - Synchronizes final full text on `generation_completed`.
+   - Uses functional `setMessages((prev) => [...prev, userMsg, assistantMsg])` to eliminate state races.
+4. **Cache Invalidation for Pitch Demo (`studio/server/index.ts`):**
+   - Configured static server to send `'Cache-Control': 'no-cache, no-store, must-revalidate'`, `'Pragma': 'no-cache'`, `'Expires': '0'` on all assets so every browser refresh fetches the latest bundle.
+5. **Multi-Turn Context Retention:**
+   - `sendChat` forwards the full `messages` history so KV cache prefix matching is utilized across interactive turns.
+6. **Live End-to-End Verification:**
+   - Verified real-time streaming against `http://localhost:3000` via SSE with prompt `"Write a short poem about compiler optimization."` (64 tokens received, text rendered token-by-token and matched final text identically).
+   - Server running as persistent supervisor on port 3000.
 
 ---
 

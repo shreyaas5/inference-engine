@@ -454,3 +454,32 @@
      - 9/9 CTest test suites pass 100% (2.16s).
      - Python offline tool self-tests pass (`convert_to_inference_engine.py --self-test`, `verify_tokenizer_parity.py --self-test`).
      - Product verdict: `EVALUATION & DEFENSE READY`.
+
+---
+
+## Session 022 — 2026-11-01 (14:50–15:00 IST)
+- **Engineer / Agent:** Principal Full-Stack & Systems Engineer (Antigravity)
+- **Branch:** `integration/m4-full-inference` (tracking `origin/integration-m4-full-inference`)
+- **Objective:** Fix Critical Pitch Blocker (`KI-019`): Generated response text in Inference Studio chat playground was completely invisible/blank despite active streaming cursor and accurate token performance telemetry.
+- **Root Cause Analysis:**
+  1. In commit `244f78a`, `src/app/studio_worker.hpp` emitted token deltas under the JSON property `"delta"` (`{"event":"token",...,"delta":"..."}`). However, `studio/src/App.tsx` read `const text = event.text || '';`. Because `event.text` was `undefined`, it evaluated to `""`, appending empty strings to `msg.content` on every token while updating `msg.metrics`.
+  2. On `generation_completed`, `App.tsx` never updated `msg.content` with the completed text, leaving the assistant message permanently blank while displaying the metrics bar.
+  3. Static asset caching in `studio/server/index.ts` was serving JS bundles with `max-age=31536000`, causing browsers to hold onto old bundles across normal refreshes.
+- **Fixes Applied & Verified:**
+  1. **Dual Property Emission (`src/app/studio_worker.hpp`):**
+     - Emitted both `"delta"` and `"text"` on token events (`ss << ",\"delta\":\"" << ... << "\",\"text\":\"" << ...`).
+  2. **Frontend Robust Token & Completion Parsing (`studio/src/App.tsx`):**
+     - Handled `event.delta !== undefined ? event.delta : (event.text || '')`.
+     - Targeted assistant messages by `activeMessageIdRef.current` with fallback to `last.role === 'assistant'`.
+     - In `generation_completed`, synchronized `content: fullText && fullText.length >= msg.content.length ? fullText : (msg.content || fullText)`.
+     - Updated message state updates to functional `setMessages((prev) => [...prev, userMsg, assistantMsg])`.
+  3. **Zero Browser Caching for Pitch (`studio/server/index.ts`):**
+     - Configured static server to send `'Cache-Control': 'no-cache, no-store, must-revalidate'`, `'Pragma': 'no-cache'`, `'Expires': '0'` on all assets.
+  4. **Multi-Turn Context & Startup Hardening:**
+     - Wired multi-turn `messages` array in `sendChat` so conversational prefix matching is utilized across interactive turns.
+     - Hardened `./start_studio.sh` with automatic port 3000 freeing and asset verification.
+  5. **Live Verification:**
+     - Tested live inference stream via `node test_poem.mjs` against `http://localhost:3000`: Prompt `"Write a short poem about compiler optimization."` streamed 64 tokens with 100% text fidelity token-by-token and matched final text identically.
+     - Confirmed `curl -I http://127.0.0.1:3000/` returns `Cache-Control: no-cache, no-store, must-revalidate`.
+     - Rebuilt production frontend bundle: `dist/assets/index-Wp3IOSSg.js`.
+

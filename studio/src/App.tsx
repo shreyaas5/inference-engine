@@ -255,7 +255,7 @@ export const App: React.FC = () => {
     };
 
     const updatedMessages = [...messages, userMsg];
-    setMessages([...updatedMessages, assistantMsg]);
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setIsGenerating(true);
 
     try {
