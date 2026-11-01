@@ -20,6 +20,8 @@
 - [x] **M5 End-to-End Real Inference:** Executed full 22-layer real forward pass with real-time streaming detokenization across 5 test prompts. Verified coherent English text output, zero NaNs, and zero memory corruption.
 - [x] **M5 Hardware Benchmarking:** Verified thread scaling (`1, 2, 4, 8` threads) and SIMD microbenchmarks on Apple Silicon NEON (up to 36 tok/s decode, 114.2 GFLOPS).
 - [x] **M6 Productisation & Release:** Repository-wide branch synchronisation (zero lost commits); interactive multi-turn chat REPL (`BIOS> `); KV-cache prefix matching and `KvCache::truncate()`; Top-K candidate filtering in Sampler; `--bench-runs <N>` multi-iteration statistical summary; auto-discovery of default model/tokenizer; robust error diagnostics; comprehensive documentation overhaul in `README.md` and `DECISIONS.md` (`ADR-013`). Product Ready.
+- [x] **M7 Release Validation & Final Demo Readiness:** Clean-checkout test, CI green across Ubuntu x86_64 and macOS ARM64, reproducibility verified.
+- [x] **M8 Inference Studio (Interactive Workstation & Observability):** Persistent C++ telemetry worker mode (`--studio-worker`), zero-copy model residency, real OS RAM/CPU telemetry, Node.js API gateway with Server-Sent Events (`/api/events`), and terminal-inspired React 19 + TypeScript workstation frontend with live SVG throughput charting, KV-cache monitor, Model Inspector (all 201 tensors), and Benchmark Lab with statistical aggregation against historical baselines. Documented in `ADR-014`.
 
 ---
 

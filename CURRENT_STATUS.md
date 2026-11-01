@@ -1,8 +1,8 @@
 # `CURRENT_STATUS.md` — Single Source of Truth for Project Status
 
-> **Last Updated:** 2026-11-01T13:10:00+05:30  
+> **Last Updated:** 2026-11-01T14:20:00+05:30  
 > **Current Active Branch:** `integration/m4-full-inference`  
-> **Consolidated Integration Baseline:** `integration/m4-full-inference` (HEAD: `44a2ec7` + M6 productization commits, branched from `main` at `5657d9278b2f59e1f1ae0605baf1543cb860fde7`)  
+> **Consolidated Integration Baseline:** `integration/m4-full-inference` (HEAD: `90cb789` + M8 Inference Studio, branched from `main` at `5657d9278b2f59e1f1ae0605baf1543cb860fde7`)  
 > **Protected / Shared Baselines:** `main` (`5657d92`), `origin/integration` (`783b8f4`), PR #6 open  
 > **Integrated Feature Branches (All Feature Branches Fully Merged / Superseded):**  
 > - Member U: `origin/feature/transformer-runtime` (`fb6420b` — RoPE precomputation, `forward_prompt` API, real TinyLlama E2E validation)  
@@ -24,13 +24,18 @@
   - Verified full autoregressive forward pass across 5 real prompts with streaming CLI tokenization.
   - Verified NEON SIMD decoding at **~35 tok/s decode**, **658.2 MiB peak RSS**.
 - **Milestone M6 (Productisation, Release Hardening & Interactive Chat UX):** **COMPLETE & VERIFIED:**
-  - **M6.0 Branch Synchronisation:** Full audit across all 11 local and 18 remote branches confirmed zero unintegrated teammate commits. `integration/m4-full-inference` is the canonical integration baseline.
-  - **M6.1 Interactive Chat REPL:** Implemented multi-turn conversational loop with `BIOS> ` prompt, banner, `/clear`, `/exit`, `/help`, streaming token output, and context-window monitoring.
-  - **M6.2 KV-Cache Prefix Matching:** Implemented `KvCache::truncate()` and automatic prefix matching across multi-turn interactions, avoiding redundant prompt re-computation.
-  - **M6.3 Sampling Enhancements:** Added `--top-k` candidate filtering to `SamplerConfig` and `Sampler::sample()` with unit test coverage.
-  - **M6.4 Multi-Run Benchmark Statistical Summary:** Added `--bench-runs <N>` reporting mean, median, min, and max for TTFT, prompt throughput, and decode throughput.
-  - **M6.5 Robust Error Diagnostics & Auto-Discovery:** Automated detection of default `.ie` model and tokenizer assets; clear error diagnostics for missing files and malformed flags.
-  - **M6.6 Documentation & Parity:** Fully revamped `README.md` with architecture diagram, one-command chat quickstart, CLI reference, and verified Hugging Face tokenizer parity (7/7 tests + BOS/EOS + chat template).
+  - Full audit across all 11 local and 18 remote branches confirmed zero unintegrated teammate commits.
+  - Interactive multi-turn chat REPL, KV-cache prefix matching, `--top-k` sampling, and `--bench-runs`.
+- **Milestone M7 (Release Validation & Final Demo Readiness):** **COMPLETE & VERIFIED:**
+  - Clean-checkout test, CI green across Ubuntu x86_64 and macOS ARM64, reproducibility verified.
+- **Milestone M8 (Build Inference Studio: Interactive Workstation Frontend & Telemetry):** **COMPLETE & VERIFIED:**
+  - **M8.1 Persistent Worker Telemetry Mode (`--studio-worker`):** Implemented in `src/app/studio_worker.hpp`. Loads and memory-maps `.ie` model once at startup, keeps engine resident, handles JSON-lines commands over stdio (`chat`, `stop`, `clear`, `configure`, `benchmark`, `status`), and streams fine-grained execution events with real OS RSS and CPU instrumentation.
+  - **M8.2 Node.js API Gateway & SSE Hub (`studio/server/`):** Native HTTP server and process supervisor streaming real-time Server-Sent Events (`/api/events`) and handling REST endpoints (`/api/health`, `/api/model`, `/api/system`, `/api/chat`, `/api/benchmark`, `/api/logs`).
+  - **M8.3 Terminal-Inspired Three-Panel Workstation (`studio/src/`):** React 19 + TypeScript + Vite + Tailwind CSS dark obsidian UI. Navigation Sidebar (left), Playground / Benchmark Lab / Model Inspector / Log Viewer (center), and Observability Panel (right) with real-time rolling SVG throughput chart, live gauges (TTFT, Decode TPS, Prefill TPS, Peak RSS), and KV cache monitor.
+  - **M8.4 Model Inspector:** Complete technical breakdown of `.ie` v1 format, 22 layers, GQA 8:1, RoPE theta, and full searchable directory of all 201 model tensors with shapes, data types, and byte offsets.
+  - **M8.5 Dedicated Benchmark Lab:** Configurable multi-run benchmark runner with live progress, statistical aggregation (mean, median, min, max, stddev), and pass/fail baseline comparison against historical M6/M7 baselines.
+  - **M8.6 Zero External Runtimes:** Sole source of inference is the custom C++17 engine. Zero runtime dependencies on PyTorch, LibTorch, llama.cpp, Ollama, or MLX.
+  - **M8.7 End-to-End Hardware Verification:** Verified real prompt streaming, KV cache prefix reuse (30 tokens reused on Turn 2), benchmark SSE streaming, and 9/9 CTest pass rate. Documented in `ADR-014`.
 
 ---
 

@@ -14,6 +14,7 @@ Developed for BIOS V2 — Problem Statement **PS08 (Own Inference Engine)**.
 - **Quantisation:** `Q4_0` block quantisation (32 weights per block, 18 bytes: 2-byte IEEE 754 FP16 scale + 16 packed nibble bytes), compressing the 1.1B model from **4.4 GB to 619 MB** (~7.1x memory reduction).
 - **Persistent Thread Pool:** Low-overhead cache-line aligned work-stealing worker pool designed for low core counts (2–8 threads) without runtime heap allocation during generation.
 - **Interactive Multi-Turn Chat:** Built-in interactive REPL (`--chat`) with automatic model/tokenizer discovery, streaming token output, prefix-matching KV cache reuse across conversational turns, and context limit enforcement.
+- **Inference Studio Workstation:** Full-stack interactive terminal workstation with real-time SVG throughput charting, live KV-cache monitor, complete 201-tensor inspector, benchmark lab, and streaming runtime logs—powered 100% by the custom C++ engine over persistent JSON-lines stdio.
 - **Flexible Sampling:** Deterministic greedy, nucleus ($top\text{-}p$), and candidate-filtered ($top\text{-}k$) sampling.
 
 ---
@@ -196,7 +197,36 @@ Options:
 
 ---
 
-## 6. Performance Benchmarks
+## 6. Inference Studio (Interactive Workstation Frontend)
+
+Transform the engine into a full-stack local workstation with a high-density terminal interface:
+
+- **Three-Panel Layout:** Navigation Sidebar, Centre View (Inference Playground, Benchmark Lab, Model Inspector, Runtime Logs), and Right Observability Panel.
+- **Real-Time Telemetry:** Live decode throughput gauge with target baseline comparison (35 tok/s), TTFT latency in ms, prompt prefill TPS, resident memory (RSS in MiB), and rolling SVG throughput curve.
+- **Model Inspector:** Detailed architecture breakdown (22 layers, GQA 8:1, SwiGLU, RoPE theta 10000.0, zero-copy `mmap`) and searchable directory of all 201 model tensors.
+- **Dedicated Benchmark Lab:** Multi-iteration benchmark execution with statistical aggregation (mean, median, min, max, stddev) and pass/fail baseline comparison.
+- **Zero External Inference Runtimes:** The web workstation communicates exclusively with `./build/inference-engine --studio-worker` via persistent standard input/output JSON-lines streams and Server-Sent Events (SSE).
+
+### Quickstart
+
+```bash
+# 1. Build C++ engine (if not already built)
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON
+cmake --build build --parallel 4
+
+# 2. Launch Inference Studio
+cd studio
+npm install
+npm run build
+npm start
+
+# 3. Open workstation in browser
+# http://localhost:3000
+```
+
+---
+
+## 7. Performance Benchmarks
 
 Measured on an Apple Silicon M-series laptop CPU (ARM64 NEON, 4 threads, `TinyLlama-1.1B-Chat`):
 
@@ -211,7 +241,7 @@ Measured on an Apple Silicon M-series laptop CPU (ARM64 NEON, 4 threads, `TinyLl
 
 ---
 
-## 7. Model Conversion Instructions
+## 8. Model Conversion Instructions
 
 Use the included offline conversion utility (`tools/convert_to_inference_engine.py`) to convert any official TinyLlama checkpoint:
 
@@ -234,7 +264,7 @@ python3 tools/convert_to_inference_engine.py \
 
 ---
 
-## 8. Verification & Test Suite
+## 9. Verification & Test Suite
 
 All 9 deterministic CTest suites and Python parity validations pass:
 

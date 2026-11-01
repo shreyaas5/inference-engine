@@ -400,3 +400,37 @@
   5. **M6.4 Multi-Run Benchmark Summary:** Added `--bench-runs <N>` reporting mean, median, min, max for TTFT, prompt throughput, and decode throughput.
   6. **M6.5 Diagnostics & Auto-Discovery:** Automated discovery of `.ie` model and tokenizer assets from `models/`; added error diagnostics for non-existent files and invalid flags in CLI process tests.
   7. **M6.6–M6.8 Release Documentation & Validation:** Overhauled `README.md`, updated `DECISIONS.md` (ADR-013), `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`. All 9 CTest suites passed 100% in 2.66s. Hugging Face tokenizer parity passed 100%. Product verdict: `PRODUCT READY`.
+
+---
+
+## Session 020 — 2026-11-01 (14:00–14:30 IST)
+- **Engineer / Agent:** Principal Full-Stack Engineer, C++ Systems Engineer, Frontend Architect (Antigravity)
+- **Branch:** `integration/m4-full-inference` (tracking `origin/integration-m4-full-inference`)
+- **Objective:** Execute Milestone M8: Build Inference Studio — Full-Stack Frontend, Live Telemetry and Interactive Inference Workstation.
+- **Milestone M8 Deliverables & Verification Results:**
+  1. **Persistent Worker Subprocess (`src/app/studio_worker.hpp`, `src/app/main.cpp`):**
+     - Added `--studio-worker` persistent JSON-lines stdio telemetry worker mode.
+     - Loads and memory-maps `.ie` model once at startup (0.34 ms load time) and maintains resident `TransformerEngine` and `KvCache`.
+     - Supports commands: `status`, `chat`, `stop`, `clear`, `configure`, `benchmark`, `shutdown`.
+     - Real OS telemetry instrumentation: captures resident RAM footprint via `mach_task_basic_info` (Darwin) / `/proc/self/statm` (Linux) and CPU utilization via `getrusage()`.
+  2. **Node.js API Gateway & SSE Event Hub (`studio/server/index.ts`, `studio/server/engineManager.ts`):**
+     - Spawns and manages `inference-engine --studio-worker` persistent child process with zero IPC overhead.
+     - Implements Server-Sent Events stream at `/api/events` broadcasting fine-grained execution events (`generation_started`, `token`, `generation_completed`, `generation_cancelled`, `context_cleared`, `benchmark_progress`, `benchmark_completed`, `log`).
+     - Exposes REST endpoints: `/api/health`, `/api/model`, `/api/system`, `/api/chat`, `/api/chat/stop`, `/api/chat/clear`, `/api/configure`, `/api/benchmark`, `/api/benchmark/history`, `/api/logs`, `/api/logs/clear`.
+     - Serves built production frontend assets directly from `studio/dist/`.
+  3. **Terminal-Themed Workstation Frontend (`studio/src/`):**
+     - Built with React 19, TypeScript, Vite, Tailwind CSS v4, Lucide icons in an obsidian dark aesthetic (`#080a0d`) with phosphor green accents (`#10b981`).
+     - **NavigationSidebar:** left panel with engine status badge, active view selector, footer hardware summary.
+     - **ChatPlayground:** conversational chat with streaming cursor, metrics pill badges (TTFT, prefill TPS, decode TPS, peak RSS), runtime sliders (temp, top-p, top-k, max tokens, threads), and prompt starter pills.
+     - **ObservabilityPanel:** 4 real-time KPI gauges, live rolling SVG throughput curve, KV cache monitor, and hardware runtime status table.
+     - **ModelInspector:** complete architecture breakdown and searchable table of all 201 model tensors with shapes, data types, and byte offsets.
+     - **BenchmarkLab:** configurable multi-run benchmark runner with live progress, statistical aggregation (mean, median, min, max, stddev), and pass/fail baseline comparison against historical M6/M7 baselines.
+     - **RuntimeLogViewer:** live streaming engine log viewer with level filtering, search, auto-scroll, clear, and download.
+     - **SettingsModal:** runtime configuration and engine restart modal.
+  4. **Zero External Runtimes:**
+     - 100% custom C++17 inference runtime. Zero PyTorch, LibTorch, llama.cpp, Ollama, or MLX dependencies.
+  5. **Architectural Decision Record:**
+     - Recorded `ADR-014` in `DECISIONS.md`.
+  6. **End-to-End Verification:**
+     - 9/9 CTest test suites pass 100% (2.64s).
+     - Verified live streaming chat, KV cache prefix reuse (30 tokens reused on Turn 2, decode TPS = 36.38 tok/s), benchmark SSE streaming, and 0 warnings on frontend and C++ builds.

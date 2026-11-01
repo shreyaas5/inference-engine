@@ -29,6 +29,7 @@
 #include "inference_engine/sampler.hpp"
 #include "inference_engine/tokenizer.hpp"
 #include "inference_engine/transformer.hpp"
+#include "studio_worker.hpp"
 
 namespace {
 
@@ -41,6 +42,8 @@ struct Arguments {
     bool show_help = false;
     bool show_info = false;
     bool chat_mode = false;
+    bool studio_worker = false;
+    bool threads_specified = false;
     bool encode_only = false;
     bool decode_only = false;
     bool format_chat_only = false;
@@ -74,6 +77,7 @@ void print_help() {
         << "  --add-bos            Add BOS in --encode-only mode\n"
         << "  --add-eos            Add EOS in --encode-only mode\n"
         << "  --format-chat        Print the formatted user chat prompt and exit\n"
+        << "  --studio-worker      Run persistent JSON-lines telemetry worker for Inference Studio\n"
         << "  --info               Print detected CPU backend and frozen model config\n"
         << "  --help, -h           Show this help\n";
 }
@@ -126,6 +130,10 @@ Status parse_arguments(int argc, char** argv, Arguments* args) {
             args->chat_mode = true;
             continue;
         }
+        if (arg == "--studio-worker") {
+            args->studio_worker = true;
+            continue;
+        }
         if (arg == "--benchmark") {
             args->runtime.benchmark_mode = true;
             continue;
@@ -175,6 +183,7 @@ Status parse_arguments(int argc, char** argv, Arguments* args) {
                                          "--threads must be an integer in [1, UINT32_MAX]");
                 }
                 args->runtime.num_threads = static_cast<uint32_t>(parsed_unsigned);
+                args->threads_specified = true;
             } else if (arg == "--max-tokens" || arg == "--max-new-tokens") {
                 if (!parse_unsigned(value, &parsed_unsigned) ||
                     parsed_unsigned > std::numeric_limits<uint32_t>::max()) {
@@ -424,6 +433,16 @@ int main(int argc, char** argv) {
                 break;
             }
         }
+    }
+
+    if (args.studio_worker) {
+        const uint32_t initial_threads = args.threads_specified ? args.runtime.num_threads : 4u;
+        studio::StudioWorker worker(args.runtime.model_path,
+                                    args.runtime.tokenizer_path,
+                                    initial_threads,
+                                    &process_cpu_seconds,
+                                    &peak_resident_bytes);
+        return worker.run();
     }
 
     const bool is_interactive_chat =

@@ -1,63 +1,65 @@
 # `SESSION_HANDOFF.md` — Session-to-Session Continuation
 
-> **Date:** 2026-11-01T13:10:00+05:30  
+> **Date:** 2026-11-01T14:20:00+05:30  
 > **Active Branch:** `integration/m4-full-inference`  
 > **Base Branch:** `main`  
-> **Status:** **M6 PRODUCTISATION COMPLETE — READY FOR RELEASE**
+> **Status:** **M8 INFERENCE STUDIO COMPLETE — FULL-STACK TERMINAL WORKSTATION READY**
 
 ---
 
-## 1. Summary of Changes in this Session (Milestone M6)
+## 1. Summary of Changes in this Session (Milestone M8)
 
-1. **Repository-Wide Branch Synchronisation (M6.0):**
-   - Verified all 11 local and 18 remote branches.
-   - Proved that `integration/m4-full-inference` contains all relevant teammate contributions across S, U, I, and P.
-   - Preserved `stash@{0}` intact.
-2. **Interactive Chat REPL (M6.1):**
-   - Implemented interactive multi-turn conversational loop in `src/app/main.cpp`.
-   - Formatted banner with detected model format (`Q4_0`), SIMD backend (`NEON`/`AVX2`), and worker thread count.
-   - Interactive commands: `/help`, `/clear` (resets history and KV cache), `/exit`, `/quit`.
-   - Streaming output via SentencePiece incremental decode.
-   - Context window tracking with warning diagnostics approaching 2048 tokens.
-3. **KV-Cache Prefix Matching & Truncation (M6.2):**
-   - Added `KvCache::truncate(uint32_t new_len)` to `include/inference_engine/kv_cache.hpp` and `src/core/kv_cache.cpp` to safely rewind sequence lengths without violating append/commit contracts.
-   - Added unit test in `tests/test_kv_cache.cpp`.
-   - Implemented token prefix matching in `src/app/main.cpp` so multi-turn conversations reuse pre-computed K/V activations.
-4. **Top-K Sampling (M6.3):**
-   - Added `top_k` candidate filtering to `SamplerConfig` and `Sampler::sample()` in `include/inference_engine/sampler.hpp` and `src/sampler/sampler.cpp`.
-   - Added unit tests for $top\text{-}k=1$ (collapse to argmax) and $top\text{-}k=2$ (two largest logits) in `tests/test_sampler.cpp`.
-   - Added `--top-k <n>` flag to CLI argument parser.
-5. **Multi-Run Benchmark Statistical Summary (M6.4):**
-   - Added `--bench-runs <N>` flag to `src/app/main.cpp`.
-   - Reports mean, median, min, max for TTFT, prompt throughput, and decode throughput.
-6. **Robust Error Diagnostics & Auto-Discovery (M6.5):**
-   - Automatically searches for default `.ie` model and `tokenizer.model` in `models/` if omitted.
-   - Validates existence of model/tokenizer paths and returns clear error messages.
-   - Added CLI process tests in `tests/test_cli_integration.cpp`.
-7. **Comprehensive Documentation & Validation (M6.6–M6.8):**
-   - Overhauled `README.md` with complete architecture diagram, quickstart, benchmark results, and CLI reference.
-   - Verified 100% pass across all 9 CTest suites and Hugging Face tokenizer parity (7/7 text cases + chat template).
+1. **Persistent Worker Subprocess (`--studio-worker`):**
+   - Implemented `StudioWorker` in `src/app/studio_worker.hpp` and integrated `--studio-worker` flag into `src/app/main.cpp`.
+   - Memory-maps the `.ie` model once at startup (0.34 ms load time) and maintains resident `TransformerEngine` and `KvCache`.
+   - Bidirectional JSON-lines stdio protocol for `chat`, `stop`, `clear`, `configure`, `benchmark`, `status`, and `shutdown`.
+   - Real telemetry instrumentation: per-token and status telemetry capturing resident RAM footprint via `mach_task_basic_info` (Darwin) / `/proc/self/statm` (Linux) and CPU utilization via `getrusage()`.
+2. **Node.js API Gateway & SSE Event Hub (`studio/server/`):**
+   - `studio/server/engineManager.ts`: Process supervisor for `inference-engine --studio-worker` managing lifecycle, auto-restart, cancellation, log buffer, and historical baseline records (M6, M7, M5 FP32).
+   - `studio/server/index.ts`: Native HTTP server broadcasting Server-Sent Events (`/api/events`) and serving REST endpoints (`/api/health`, `/api/model`, `/api/system`, `/api/chat`, `/api/chat/stop`, `/api/chat/clear`, `/api/configure`, `/api/benchmark`, `/api/benchmark/history`, `/api/logs`, `/api/logs/clear`).
+   - Serves built production frontend assets directly from `studio/dist/`.
+3. **Terminal-Themed Workstation Frontend (`studio/src/`):**
+   - Built with React 19, TypeScript, Vite, Tailwind CSS v4, Lucide icons.
+   - Obsidian dark palette (`#080a0d`) with green phosphor accents (`#10b981`), amber warnings (`#f59e0b`), and clean monospaced technical typography.
+   - **NavigationSidebar (Left):** Model status badge, active view switcher, footer hardware summary.
+   - **ChatPlayground (Centre):** Interactive conversation with streaming cursor, metrics pill badges (TTFT, prefill TPS, decode TPS, peak RSS), runtime sliders (temp, top-p, top-k, max tokens, threads), and prompt starter pills.
+   - **ObservabilityPanel (Right):** 4 real-time KPI gauges, live rolling SVG throughput chart, KV cache monitor (capacity, sequence length, layers, GQA ratio), and hardware runtime status table.
+   - **ModelInspector:** Complete architecture breakdown and searchable table of all 201 model tensors with shapes, data types, and byte offsets.
+   - **BenchmarkLab:** Configurable multi-run benchmark runner with live progress, statistical aggregation (mean, median, min, max, stddev), and comparison against historical baselines.
+   - **RuntimeLogViewer:** Live streaming engine log viewer with level filtering (INFO, WARN, ERROR), search, auto-scroll, clear, and download.
+   - **SettingsModal:** Model switching and runtime parameter reconfiguration.
+4. **Zero External Inference Runtimes:**
+   - 100% custom C++17 inference runtime. Zero PyTorch, LibTorch, llama.cpp, Ollama, or MLX dependencies.
+5. **Architectural Decision Record (ADR-014):**
+   - Documented in `DECISIONS.md`.
+6. **Full Validation:**
+   - 9/9 CTest test suites pass (100%).
+   - All Python self-tests pass (converter, tokenizer parity contract).
+   - Verified live streaming chat, KV cache prefix reuse (30 tokens reused on Turn 2), and benchmark execution.
 
 ---
 
 ## 2. Verified Test Commands
 
 ```bash
-# Release build
+# 1. Build C++ engine
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON
 cmake --build build --parallel 4
 
-# Run all 9 CTest test suites
+# 2. Run all 9 CTest test suites
 ctest --test-dir build --output-on-failure
 
-# Launch interactive chat
-./build/inference-engine --chat --threads 4
+# 3. Build and launch Inference Studio
+cd studio
+npm install
+npm run build
+npm start
+# Workstation accessible at http://localhost:3000
 
-# Multi-run benchmark
-./build/inference-engine --chat --prompt "Explain CPU cache locality." --threads 4 --bench-runs 3
-
-# Verify Hugging Face tokenizer parity
-python3 tools/verify_tokenizer_parity.py \
+# 4. Smoke test CLI help and info
+./build/inference-engine --info
+./build/inference-engine --help
+```
   --tokenizer-model models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model \
   --tokenizer-config models/TinyLlama-1.1B-Chat-v1.0/tokenizer_config.json \
   --engine ./build/inference-engine

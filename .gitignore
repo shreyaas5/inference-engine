@@ -54,6 +54,13 @@ env/
 *.egg-info/
 dist/
 
+# Node / Frontend Studio
+node_modules/
+studio/node_modules/
+studio/dist/
+studio/.vite/
+*.tsbuildinfo
+
 # IDEs and OS files
 .vscode/
 .idea/
