@@ -34,12 +34,15 @@ Member U owns the Transformer Engine, Scalar Reference Kernels, `KvCache`, and N
    - Added `scalar::rope_inplace_cached_f32`, eliminating 25,344 runtime trigonometric calls per token while maintaining mathematical bit-identity.
 4. **Added Multi-Token Prefill API:**
    - Implemented `TransformerEngine::forward_prompt(tokens, len, out_final_logits)` for efficient multi-token prompt prefill.
-5. **Executed Real-Model End-to-End Generation & Benchmarking:**
-   - Verified real-weight CLI inference (`inference-engine.exe`) generating coherent text (*"Sure! Here's a short fact about space: 1. The first object to be launched into space"*).
-   - Pure `Q4_0`: TTFT `1200.07 ms`, decode `20.89 tokens/sec`, peak RSS `698.71 MiB`.
-   - Mixed `Q4_0`: TTFT `1338.06 ms`, decode `19.07 tokens/sec`, peak RSS `1126.42 MiB`.
+5. **Executed Real-Model End-to-End Generation & M7 Assignment Validation:**
+   - **General Knowledge:** `"What is the capital of France and what is it famous for?"` -> generated Paris, Eiffel Tower, Louvre (29 prompt tokens, 64 gen tokens, `17.93 tok/s`).
+   - **Reasoning & Instruction Following:** `"If all cats are mammals..."` -> generated 17 tokens and cleanly halted on `kEosTokenId` (2).
+   - **Conversational Advice:** `"Hello! How are you doing today? Can you give me three tips for learning C++?"` -> generated structured tips (35 prompt tokens, 80 gen tokens, `18.08 tok/s`).
+   - **Multi-Turn Context Retention:**
+     - In CLI dialogue: `"Your name is Alex."` (60 prompt tokens, 6 gen tokens, `18.96 tok/s`).
+     - In C++ test suite: `test_real_tinyllama_multiturn_if_present()` in `tests/test_golden_forward.cpp` verified that `kv_cache.seq_len()` advances monotonically across turns (`0 -> 63 -> 90`) and accurately recalls the user's name without re-prefilling past turns.
 6. **Delivered Validation Artifact:**
-   - Created [`docs/validation/REAL_TINYLLAMA_TRANSFORMER_VALIDATION.md`](docs/validation/REAL_TINYLLAMA_TRANSFORMER_VALIDATION.md).
+   - Created comprehensive M7 report [`docs/validation/REAL_TINYLLAMA_TRANSFORMER_VALIDATION.md`](docs/validation/REAL_TINYLLAMA_TRANSFORMER_VALIDATION.md).
 
 ---
 

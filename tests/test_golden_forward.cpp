@@ -14,6 +14,7 @@
 #include "inference_engine/kernels.hpp"
 #include "inference_engine/loader.hpp"
 #include "inference_engine/sampler.hpp"
+#include "inference_engine/tokenizer.hpp"
 #include "inference_engine/transformer.hpp"
 
 namespace inference_engine::testing {
@@ -884,6 +885,143 @@ bool test_offline_golden_fixture_if_present() {
     return true;
 }
 
+bool test_real_tinyllama_multiturn_if_present() {
+    const std::string model_path = "models/tinyllama-1.1b-q4_0.ie";
+    const std::string tok_path = "models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model";
+
+    std::ifstream mf(model_path, std::ios::binary);
+    std::ifstream tf(tok_path, std::ios::binary);
+    if (!mf || !tf) {
+        std::cout << "[INFO] Real TinyLlama models not found; skipping live multi-turn test.\n";
+        return true;
+    }
+
+    std::cout << "[INFO] Running real TinyLlama multi-turn context retention & KV-cache test...\n";
+
+    ModelLoader loader;
+    Status st = loader.load_from_file(model_path);
+    if (!st.ok()) {
+        std::cerr << "Failed to load " << model_path << ": " << st.message << "\n";
+        return false;
+    }
+
+    Tokenizer tokenizer;
+    st = tokenizer.load(tok_path);
+    if (!st.ok()) {
+        std::cerr << "Failed to load tokenizer: " << st.message << "\n";
+        return false;
+    }
+
+    TransformerEngine engine;
+    st = engine.init(loader.config(), &loader, detect_best_backend(), 4);
+    if (!st.ok()) {
+        std::cerr << "Failed to init TransformerEngine: " << st.message << "\n";
+        return false;
+    }
+
+    const uint32_t vocab_size = loader.config().vocab_size;
+    std::vector<float> logits(vocab_size, 0.0f);
+
+    // --- Turn 1: Introduce Name ---
+    const std::string prompt1 = "<|user|>\nHello, my name is Alex.</s>\n<|assistant|>\n";
+    std::vector<int32_t> p1_tokens;
+    st = tokenizer.encode(prompt1, true, false, &p1_tokens);
+    if (!st.ok() || p1_tokens.empty()) {
+        std::cerr << "Failed to encode prompt1\n";
+        return false;
+    }
+
+    const uint32_t start_len = engine.kv_cache().seq_len();
+    if (start_len != 0) {
+        std::cerr << "Initial KV cache sequence length must be 0, got " << start_len << "\n";
+        return false;
+    }
+
+    // Prefill Turn 1
+    st = engine.forward_prompt(p1_tokens.data(), p1_tokens.size(), logits.data());
+    if (!st.ok()) {
+        std::cerr << "Turn 1 forward_prompt failed: " << st.message << "\n";
+        return false;
+    }
+    if (engine.kv_cache().seq_len() != p1_tokens.size()) {
+        std::cerr << "KV cache seq_len after Turn 1 prefill mismatch\n";
+        return false;
+    }
+
+    // Autoregressive decode Turn 1
+    std::vector<int32_t> turn1_gen;
+    int32_t next_tok = Sampler::sample_greedy(logits.data(), logits.size());
+    while (turn1_gen.size() < 40 && next_tok != kEosTokenId) {
+        turn1_gen.push_back(next_tok);
+        const uint32_t pos = engine.kv_cache().seq_len();
+        st = engine.forward_token(next_tok, pos, logits.data());
+        if (!st.ok()) {
+            std::cerr << "Turn 1 decode forward failed: " << st.message << "\n";
+            return false;
+        }
+        next_tok = Sampler::sample_greedy(logits.data(), logits.size());
+    }
+    if (next_tok == kEosTokenId) {
+        st = engine.forward_token(kEosTokenId, engine.kv_cache().seq_len(), logits.data());
+        if (!st.ok()) return false;
+    }
+
+    std::string turn1_text;
+    tokenizer.decode(turn1_gen, &turn1_text);
+    std::cout << "  [Turn 1 Output] " << turn1_text << "\n";
+    const uint32_t turn1_end_pos = engine.kv_cache().seq_len();
+    std::cout << "  [Turn 1 KV-Cache End Pos] " << turn1_end_pos << "\n";
+
+    // --- Turn 2: Query Name (KV Cache preserved without clearing) ---
+    const std::string prompt2 = "\n<|user|>\nWhat is my name?</s>\n<|assistant|>\n";
+    std::vector<int32_t> p2_tokens;
+    st = tokenizer.encode(prompt2, false, false, &p2_tokens);
+    if (!st.ok() || p2_tokens.empty()) {
+        std::cerr << "Failed to encode prompt2\n";
+        return false;
+    }
+
+    // Prefill Turn 2 (starting at turn1_end_pos in the KV cache)
+    st = engine.forward_prompt(p2_tokens.data(), p2_tokens.size(), logits.data());
+    if (!st.ok()) {
+        std::cerr << "Turn 2 forward_prompt failed: " << st.message << "\n";
+        return false;
+    }
+    if (engine.kv_cache().seq_len() != turn1_end_pos + p2_tokens.size()) {
+        std::cerr << "KV cache seq_len after Turn 2 prefill mismatch\n";
+        return false;
+    }
+
+    // Autoregressive decode Turn 2
+    std::vector<int32_t> turn2_gen;
+    next_tok = Sampler::sample_greedy(logits.data(), logits.size());
+    while (turn2_gen.size() < 30 && next_tok != kEosTokenId) {
+        turn2_gen.push_back(next_tok);
+        const uint32_t pos = engine.kv_cache().seq_len();
+        st = engine.forward_token(next_tok, pos, logits.data());
+        if (!st.ok()) {
+            std::cerr << "Turn 2 decode forward failed: " << st.message << "\n";
+            return false;
+        }
+        next_tok = Sampler::sample_greedy(logits.data(), logits.size());
+    }
+
+    std::string turn2_text;
+    tokenizer.decode(turn2_gen, &turn2_text);
+    std::cout << "  [Turn 2 Output] " << turn2_text << "\n";
+    const uint32_t turn2_end_pos = engine.kv_cache().seq_len();
+    std::cout << "  [Turn 2 KV-Cache End Pos] " << turn2_end_pos << "\n";
+
+    // Verify context retention: Turn 2 response must contain "Alex"
+    if (turn2_text.find("Alex") == std::string::npos) {
+        std::cerr << "Turn 2 failed to retain name 'Alex' from Turn 1: " << turn2_text << "\n";
+        return false;
+    }
+
+    std::cout << "[SUCCESS] Multi-turn context retention & KV cache continuity verified!\n";
+    return true;
+}
+
 }  // namespace
 
 bool run_golden_forward_tests() {
@@ -903,6 +1041,9 @@ bool run_golden_forward_tests() {
         return false;
     }
     if (!test_offline_golden_fixture_if_present()) {
+        return false;
+    }
+    if (!test_real_tinyllama_multiturn_if_present()) {
         return false;
     }
     return true;

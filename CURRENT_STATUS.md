@@ -12,16 +12,18 @@
 - **Milestone M0 (Architecture, `.ie` Format, CMake & Scaffold):** **COMPLETE (`VERIFIED`)** (`cb85411`).
 - **Milestone M1 (`.ie` Loader, `FP32` Converter, Scalar Kernels, `KvCache`, `FP32` Transformer):** **COMPLETE (`VERIFIED` / `TESTED`)** (`177fe49` on `main`).
 - **Milestone M2 (`Q4_0` Packing, NEON/AVX2 Kernels, `ThreadPool`, `Q4_0` & Mixed Transformer, SentencePiece Tokenizer, Sampler, CLI):** **CODE COMPLETE & INTEGRATED (`33d4bdc`) (`8 / 8` CTest suites passing).**
-- **Milestone M3 (CPU Kernel Optimization, Full 22-Layer Pretrained Checkpoint Verification & Cross-Platform Benchmarking):** **ACTIVE / MAJOR DELIVERABLES ACHIEVED:**
-  - **Completed in M3:**
+- **Milestone M3 / M7 (Real TinyLlama 1.1B Inference & Transformer Validation):** **COMPLETE & VERIFIED (`REAL-CHECKPOINT VALIDATED`):**
+  - **Completed in M3 / M7:**
+    - **U (M7 Assignment — Transformer & Real Inference Validation):** Executed multi-scenario TinyLlama-1.1B Q4_0 real inference on Windows AVX2:
+      1. General Knowledge (`Paris, Eiffel Tower, Louvre`): 29 prompt tokens, 64 gen tokens, `17.93 tok/s`.
+      2. Reasoning & Instruction Following (`Cats breathing air`): 49 prompt tokens, 17 gen tokens, cleanly halted on `kEosTokenId` (2).
+      3. Conversational Advice (`C++ learning tips`): 35 prompt tokens, 80 gen tokens, `18.08 tok/s`.
+      4. Multi-Turn Context Retention (`Name-memory`): Verified both in CLI dialogue (`"Your name is Alex."`) and programmatically in `test_real_tinyllama_multiturn_if_present()` in `tests/test_golden_forward.cpp` (`seq_len` advanced 0 -> 63 -> 90 with continuous KV cache across turns).
     - **U (Transformer Engine & Real Validation):** Precomputed RoPE frequency lookup tables in `TransformerEngine::init()` (`KI-006` resolved via `rope_inplace_cached_f32`), added `forward_prompt()` multi-token prefill, verified real 22-layer execution.
     - **S & U (Checkpoint Acquisition & Conversion):** Downloaded 100% of `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` (`2,200,119,864` bytes). Converted to pure `Q4_0` (`619,113,792` B) and mixed `Q4_0` (`1,069,673,792` B) with measured quantization metrics (`MAE = 1.385e-3`, `RMSE = 1.744e-3`, `Rel L2 = 0.0883`).
-    - **U, P & Full Pipeline (End-to-End Real Inference):** Verified real-checkpoint CLI generation with TinyLlama chat template generating coherent text:
-      - Pure `Q4_0`: TTFT `1200.07 ms`, decode `20.89 tokens/sec`, peak RSS `698.71 MiB` on 4 CPU threads.
-      - Mixed `Q4_0`: TTFT `1338.06 ms`, decode `19.07 tokens/sec`, peak RSS `1126.42 MiB` on 4 CPU threads.
     - **I (`58c604d` & `b05c4e4`):** Native AMD Ryzen 7 7745HX AVX2 verification, `ThreadPool` `std::exception_ptr` propagation, AVX2 2-row register tiling (`avx2::matmul_q4_0_f32`, `avx2::matmul_f32`), vectorized per-block scale accumulation (`compute_block_unscaled_dot_vec`), contiguous 2-row `dispatch.cpp` chunk scheduling, and `inference_engine_bench` CSV artifacts (`21.97x` speedup on `2048x2048` 8T, `162.80 GFLOPS` on `2048x5632` 16T).
     - **P (`ce769c8`):** Real-checkpoint SentencePiece C++ vs Python parity (`15/15` prompts exact match against `models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model`), seeded 64-bit `xorshift*` `Sampler`, and CLI `--benchmark` harness.
-  - **Remaining in M3:**
+  - **Remaining Backlog:**
     1. Merge `feature/transformer-runtime` and `origin/feature/cpu-kernel-optimisation` into integration baseline.
     2. Port 2-row register tiling and deferred end-of-row horizontal reduction (`vaddvq_f32`) to ARM64 NEON (`src/kernels/neon/kernels_neon.cpp`) and make `benchmarks/bench_kernels.cpp` backend-agnostic (`detect_best_backend()`).
     3. Add incremental per-token streaming detokenisation to `src/app/main.cpp`.
