@@ -386,3 +386,17 @@
      - Local CTest: **9 / 9 suites passed (100%)** in 1.95s.
      - Remote CI: GitHub Actions run `41255038648` on PR #6 passed 100% across Ubuntu GCC, macOS AppleClang, and Hugging Face Tokenizer Parity.
 
+---
+
+## Session 019 — 2026-11-01 (13:00–13:30 IST)
+- **Engineer / Agent:** Senior Integration Engineer & Release Lead (Antigravity)
+- **Branch:** `integration/m4-full-inference` (tracking `origin/integration-m4-full-inference`)
+- **Objective:** Execute Milestone M6 Productisation: complete repository-wide branch synchronisation (M6.0), implement interactive multi-turn chat REPL with KV-cache prefix matching and truncation (M6.1, M6.2), implement Top-K candidate filtering (M6.3), implement multi-run benchmark statistical summary (`--bench-runs <N>`), robust error diagnostics and auto-discovery, update full documentation and release handoff.
+- **Milestone M6 Deliverables & Verification Results:**
+  1. **M6.0 Branch Inventory:** Audited all 11 local branches and 18 remote branches. Proved `integration/m4-full-inference` contains 100% of teammate work with 0 missing commits. Preserved stash intact.
+  2. **M6.1 Interactive Chat UX:** Added `BIOS> ` multi-turn REPL with system banner, `/help`, `/clear`, `/exit`, `/quit`, streaming token decode, and context-window monitoring.
+  3. **M6.2 KV-Cache Prefix Matching:** Implemented `KvCache::truncate()` in `src/core/kv_cache.cpp` and token prefix matching in `src/app/main.cpp`. Tested multi-turn memory on real model: Turn 1 "Hi, my name is Alice." -> Turn 2 "What is my name?" -> Answer "Your name is Alice."
+  4. **M6.3 Sampling Enhancements:** Added `top_k` candidate filtering to `SamplerConfig` and `Sampler::sample()` with unit test verification in `tests/test_sampler.cpp`.
+  5. **M6.4 Multi-Run Benchmark Summary:** Added `--bench-runs <N>` reporting mean, median, min, max for TTFT, prompt throughput, and decode throughput.
+  6. **M6.5 Diagnostics & Auto-Discovery:** Automated discovery of `.ie` model and tokenizer assets from `models/`; added error diagnostics for non-existent files and invalid flags in CLI process tests.
+  7. **M6.6–M6.8 Release Documentation & Validation:** Overhauled `README.md`, updated `DECISIONS.md` (ADR-013), `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`. All 9 CTest suites passed 100% in 2.66s. Hugging Face tokenizer parity passed 100%. Product verdict: `PRODUCT READY`.

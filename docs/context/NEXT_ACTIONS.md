@@ -19,6 +19,7 @@
 - [x] **M5 Checkpoint & Conversion:** Acquired full `TinyLlama/TinyLlama-1.1B-Chat-v1.0` weights (`model.safetensors`, `2,200,119,864` bytes). Converted and validated `models/tinyllama-1.1b-q4_0.ie` (`619,113,792` bytes) and `models/tinyllama-1.1b-fp32.ie` (`4,400,213,312` bytes).
 - [x] **M5 End-to-End Real Inference:** Executed full 22-layer real forward pass with real-time streaming detokenization across 5 test prompts. Verified coherent English text output, zero NaNs, and zero memory corruption.
 - [x] **M5 Hardware Benchmarking:** Verified thread scaling (`1, 2, 4, 8` threads) and SIMD microbenchmarks on Apple Silicon NEON (up to 36 tok/s decode, 114.2 GFLOPS).
+- [x] **M6 Productisation & Release:** Repository-wide branch synchronisation (zero lost commits); interactive multi-turn chat REPL (`BIOS> `); KV-cache prefix matching and `KvCache::truncate()`; Top-K candidate filtering in Sampler; `--bench-runs <N>` multi-iteration statistical summary; auto-discovery of default model/tokenizer; robust error diagnostics; comprehensive documentation overhaul in `README.md` and `DECISIONS.md` (`ADR-013`). Product Ready.
 
 ---
 

@@ -113,6 +113,51 @@ bool run_cli_integration_test() {
         }
     }
 
+    // Test 4: Verify non-existent model file returns non-zero exit code
+    {
+        std::string cmd = cli_path + " --model non_existent_model.ie --prompt \"Hello\" 2>&1";
+        FILE* pipe = IE_POPEN(cmd.c_str(), "r");
+        if (pipe != nullptr) {
+            std::string output;
+            char buffer[256];
+            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                output += buffer;
+            }
+            int rc = IE_PCLOSE(pipe);
+            if (rc == 0) {
+                std::cerr << "CLI with missing model should have failed with non-zero exit code\n";
+                return false;
+            }
+            if (output.find("Model file not found") == std::string::npos &&
+                output.find("error") == std::string::npos) {
+                std::cerr << "CLI missing expected error diagnostic for non-existent model\n";
+                return false;
+            }
+        }
+    }
+
+    // Test 5: Verify unknown option returns non-zero exit code
+    {
+        std::string cmd = cli_path + " --unknown-option-flag 2>&1";
+        FILE* pipe = IE_POPEN(cmd.c_str(), "r");
+        if (pipe != nullptr) {
+            std::string output;
+            char buffer[256];
+            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                output += buffer;
+            }
+            int rc = IE_PCLOSE(pipe);
+            if (rc == 0) {
+                std::cerr << "CLI with unknown option should have failed with non-zero exit code\n";
+                return false;
+            }
+            if (output.find("Unknown option") == std::string::npos) {
+                std::cerr << "CLI missing expected diagnostic for unknown option\n";
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 

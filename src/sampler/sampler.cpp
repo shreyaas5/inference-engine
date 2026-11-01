@@ -95,6 +95,9 @@ int32_t Sampler::sample(const float* logits, size_t vocab_size) {
                   }
                   return lhs.id < rhs.id;
               });
+    if (config_.top_k > 0 && candidates.size() > config_.top_k) {
+        candidates.resize(config_.top_k);
+    }
 
     double total_weight = 0.0;
     for (const Candidate& candidate : candidates) {

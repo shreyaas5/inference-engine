@@ -40,6 +40,11 @@ public:
     Status commit_positions(uint32_t count = 1) noexcept;
     Status commit_token() noexcept { return commit_positions(1); }
 
+    // Rewinds the committed sequence length to `new_len` (must be <= seq_len()).
+    // Entries at positions >= new_len become invalid and are overwritten by later appends.
+    // This never advances seq_len(), so it preserves the append/commit contract.
+    Status truncate(uint32_t new_len) noexcept;
+
     const float* key_vector(uint32_t layer_idx, uint32_t pos) const noexcept;
     const float* value_vector(uint32_t layer_idx, uint32_t pos) const noexcept;
 

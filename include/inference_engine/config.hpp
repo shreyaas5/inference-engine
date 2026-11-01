@@ -75,6 +75,7 @@ struct RuntimeConfig {
     bool auto_detect_backend = true;
     float temperature = 0.0f;
     float top_p = 1.0f;
+    uint32_t top_k = 0;
     uint64_t seed = 42;
     bool benchmark_mode = false;
 };

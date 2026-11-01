@@ -51,6 +51,37 @@ bool run_sampler_tests() {
         std::cerr << "Sampler accepted an invalid top-p value\n";
         return false;
     }
+
+    // Top-k: with k = 1 and a high temperature, stochastic sampling must collapse to argmax.
+    const float flat_logits[] = {1.0f, 1.2f, 0.9f, 1.1f};
+    SamplerConfig top1_config{5.0f, 1.0f, 99};
+    top1_config.top_k = 1;
+    Sampler top1(top1_config);
+    for (size_t i = 0; i < 64; ++i) {
+        if (top1.sample(flat_logits, 4) != 1) {
+            std::cerr << "Top-k=1 sampling selected a non-argmax token\n";
+            return false;
+        }
+    }
+    // Top-k = 2 must only ever return one of the two largest logits (ids 1 and 3).
+    SamplerConfig top2_config{5.0f, 1.0f, 3};
+    top2_config.top_k = 2;
+    Sampler top2(top2_config);
+    bool saw_1 = false;
+    bool saw_3 = false;
+    for (size_t i = 0; i < 256; ++i) {
+        const int32_t id = top2.sample(flat_logits, 4);
+        if (id != 1 && id != 3) {
+            std::cerr << "Top-k=2 sampling selected token outside the top-2 set: " << id << "\n";
+            return false;
+        }
+        saw_1 = saw_1 || id == 1;
+        saw_3 = saw_3 || id == 3;
+    }
+    if (!saw_1 || !saw_3) {
+        std::cerr << "Top-k=2 sampling never explored both candidates\n";
+        return false;
+    }
     return true;
 }
 

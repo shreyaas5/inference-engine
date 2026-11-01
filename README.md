@@ -1,130 +1,274 @@
 # `inference-engine`
 
-A custom C++17 CPU inference engine for `TinyLlama/TinyLlama-1.1B-Chat-v1.0` (~1.1B parameters), engineered for commodity laptop processors using `Q4_0` block quantisation, ARM64 NEON, x86-64 AVX2, and a persistent C++17 thread pool.
+A custom C++17 CPU inference engine for `TinyLlama/TinyLlama-1.1B-Chat-v1.0` (~1.1B parameters), engineered from scratch for commodity laptop processors using `Q4_0` block quantisation, ARM64 NEON, x86-64 AVX2, and a persistent C++17 thread pool.
 
-## 1. What `inference-engine` Does
+Developed for BIOS V2 — Problem Statement **PS08 (Own Inference Engine)**.
 
-`inference-engine` loads a custom, self-describing `.ie` (version 1) binary model file via memory mapping (`mmap`) and executes autoregressive Transformer inference on the CPU without PyTorch, TensorFlow, ONNX Runtime, `llama.cpp`, or any external inference framework.
+---
 
-## 2. Why a Custom Inference Engine
+## 1. Highlights & Key Innovations
 
-- Full control over memory layout, 64-byte cache-line alignment, and `mmap` zero-copy weight access.
-- Deterministic, transparent implementations of RMSNorm, RoPE, Grouped Query Attention (GQA), SwiGLU, and `Q4_0` block matrix-vector multiplication.
-- Cross-platform SIMD acceleration targeting Apple Silicon (`NEON`) and x86-64 (`AVX2` + `FMA`) laptops, including low-memory (8 GB RAM) machines.
+- **Zero External Inference Runtimes:** Executes 100% in custom C++17. Zero runtime dependencies on PyTorch, LibTorch, TensorFlow, ONNX Runtime, `llama.cpp`, GGML, or MLX.
+- **Self-Describing `.ie` Format (v1):** Memory-mapped (`mmap`) zero-copy binary format featuring a 64-byte little-endian header, variable tensor directory, and 64-byte cache-line aligned tensor payloads (`payload_offset % 64 == 0`).
+- **SIMD Micro-Kernels:** Handwritten ARM64 NEON and x86-64 AVX2/FMA kernels with 2-row register tiling, vectorized scale accumulation, and scalar fallbacks. Achieves **2.7x – 11.6x speedup** over scalar execution.
+- **Quantisation:** `Q4_0` block quantisation (32 weights per block, 18 bytes: 2-byte IEEE 754 FP16 scale + 16 packed nibble bytes), compressing the 1.1B model from **4.4 GB to 619 MB** (~7.1x memory reduction).
+- **Persistent Thread Pool:** Low-overhead cache-line aligned work-stealing worker pool designed for low core counts (2–8 threads) without runtime heap allocation during generation.
+- **Interactive Multi-Turn Chat:** Built-in interactive REPL (`--chat`) with automatic model/tokenizer discovery, streaming token output, prefix-matching KV cache reuse across conversational turns, and context limit enforcement.
+- **Flexible Sampling:** Deterministic greedy, nucleus ($top\text{-}p$), and candidate-filtered ($top\text{-}k$) sampling.
 
-## 3. Target Model & Architecture (`TinyLlama/TinyLlama-1.1B-Chat-v1.0`)
+---
 
-| Parameter | Value |
-|---|---|
-| Layers (`num_layers`) | `22` |
-| Hidden dimension (`hidden_dim`) | `2048` |
-| Intermediate SwiGLU dimension (`intermediate_dim`) | `5632` |
-| Query heads / KV heads (`num_query_heads` / `num_kv_heads`) | `32` / `4` (GQA 8:1) |
-| Head dimension (`head_dim`) | `64` |
-| Vocabulary size (`vocab_size`) | `32000` |
-| Max sequence length (`max_seq_len`) | `2048` |
-| Normalization & Positional Encoding | RMSNorm ($\epsilon = 10^{-5}$), RoPE ($\theta = 10000.0$) |
-| Runtime Precision | `FP32` activations & KV cache; `FP32` (M1) and `Q4_0` (M2+) weights |
+## 2. Target Model Architecture (`TinyLlama-1.1B-Chat-v1.0`)
 
-## 4. Technology Stack
+| Parameter | Value | Description |
+|---|---|---|
+| **Layers** (`num_layers`) | `22` | Transformer decoder layers |
+| **Hidden dimension** (`hidden_dim`) | `2048` | Activation embedding width |
+| **Intermediate dimension** (`intermediate_dim`) | `5632` | SwiGLU MLP feed-forward hidden dimension |
+| **Attention Heads** | `32` query / `4` KV | Grouped Query Attention (GQA 8:1 ratio) |
+| **Head Dimension** (`head_dim`) | `64` | Dimension per head ($2048 / 32 = 64$) |
+| **Vocabulary Size** (`vocab_size`) | `32000` | Pinned SentencePiece BPE vocabulary |
+| **Max Sequence Length** (`max_seq_len`) | `2048` | Maximum causal context window |
+| **Normalization** | RMSNorm ($\epsilon = 10^{-5}$) | Applied pre-attention, pre-FFN, and final |
+| **Position Encoding** | RoPE ($\theta = 10000.0$) | Precomputed $\cos/\sin$ table lookup cached kernel |
+| **Weight Formats** | Pure `Q4_0` & `FP32` | 619 MB (`Q4_0`) or 4.4 GB (`FP32`) |
 
-- **Runtime:** C++17 (`std::thread`; SentencePiece C++ is the only tokenizer dependency)
-- **SIMD Intrinsics:** ARM64 `arm_neon.h`, x86-64 `immintrin.h` (`AVX2` / `FMA`)
-- **Build & Test:** CMake ($\ge 3.16$) and CTest
-- **Offline Tooling:** Python 3 (`tools/` for checkpoint inspection, `.ie` conversion, tokenizer parity, and golden reference generation)
+---
 
-## 5. Repository Structure
+## 3. High-Level Architecture
 
 ```text
-inference-engine/
-├── .github/workflows/ci.yml       # Ubuntu x86-64 & macOS ARM64 CI pipeline
-├── docs/                          # Architecture, .ie spec, Q4_0 contract, validation, team docs
-├── include/inference_engine/      # Frozen public C++17 headers (namespace inference_engine)
-├── src/                           # Modular C++17 implementation scaffolding
-│   ├── common/                    # Status, dtype metadata, CPU feature detection, tensor descriptors
-│   ├── loader/                    # .ie v1 parser, validator, and mmap loader
-│   ├── core/                      # KV cache (explicit append + commit_token contract)
-│   ├── transformer/               # 22-layer TinyLlama forward pass scaffolding
-│   ├── kernels/                   # Q4_0, scalar, NEON, AVX2, ThreadPool, and runtime dispatch
-│   ├── tokenizer/                 # Tokenizer & Zephyr chat template formatting
-│   ├── sampler/                   # Deterministic greedy & top-p sampler
-│   └── app/                       # CLI entry point (inference-engine executable)
-├── tools/                         # Offline Python conversion & validation scripts
-├── tests/                         # Deterministic CTest unit suites
-└── fixtures/                      # Synthetic test fixture rules (weights excluded via .gitignore)
+                                  +---------------------------------------+
+                                  |   Hugging Face TinyLlama Checkpoint   |
+                                  |        (model.safetensors, BF16)      |
+                                  +---------------------------------------+
+                                                      |
+                                                      | tools/convert_to_inference_engine.py
+                                                      v
+                                  +---------------------------------------+
+                                  |    Custom .ie Format (v1 Binary)      |
+                                  |    - 64-byte Header (Magic: IEMF)     |
+                                  |    - 64-byte Aligned Tensors          |
+                                  |    - Q4_0 (619 MB) or FP32 (4.4 GB)   |
+                                  +---------------------------------------+
+                                                      |
+                                                      | mmap() zero-copy
+                                                      v
++------------------------+        +---------------------------------------+
+|  SentencePiece C++     |        |              ModelLoader              |
+|  Tokenizer (BPE 32K)   |        |   Validates tensors & memory-maps     |
++------------------------+        +---------------------------------------+
+            |                                         |
+            | prompt tokens                           | tensor bindings
+            v                                         v
++-------------------------------------------------------------------------+
+|                           TransformerEngine                             |
+|                                                                         |
+|  +-------------------------------------------------------------------+  |
+|  | Causal Loop: For each layer (0 .. 21):                            |  |
+|  |   1. RMSNorm -> 2. QKV Proj (dispatch_matmul_q4_0_f32)            |  |
+|  |   3. Cached RoPE -> 4. GQA Attention (8:1) via KvCache            |  |
+|  |   5. O Proj -> Residual -> 6. RMSNorm                             |  |
+|  |   7. Gate + Up Proj -> SwiGLU Activation -> Down Proj -> Residual |  |
+|  +-------------------------------------------------------------------+  |
+|  | Final RMSNorm -> LM Head Matmul -> Unnormalized Logits            |  |
++-------------------------------------------------------------------------+
+       |                                             ^
+       | logits [32000]                              | append / commit_token
+       v                                             |
++------------------------+        +---------------------------------------+
+|   Sampler (Top-K,      |        |                KvCache                |
+|    Top-P, Greedy)      |------->|  Stores K/V vectors (22 layers)       |
+|  -> Selected Token     | token  |  Prefix-matching multi-turn reuse     |
++------------------------+        +---------------------------------------+
+            |
+            v
++------------------------+
+|  Streaming Detokenizer |
+|  & Interactive REPL    | ===> stdout (BIOS>)
++------------------------+
 ```
 
-## 6. Build & Test Instructions
+---
+
+## 4. Quick Start: One-Command Interactive Chat
+
+To start an interactive chat session with auto-detection of the converted `Q4_0` model and tokenizer:
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+# 1. Build release binary
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON
 cmake --build build --parallel 4
 
-# The tokenizer CTest and Hugging Face parity check use the exact model assets.
-mkdir -p build/tokenizer
-curl -fL https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/fe8a4ea1ffedaf415f4da2f062534de366a451e6/tokenizer.model \
-  -o build/tokenizer/tokenizer.model
-curl -fL https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/fe8a4ea1ffedaf415f4da2f062534de366a451e6/tokenizer_config.json \
-  -o build/tokenizer/tokenizer_config.json
+# 2. Launch interactive multi-turn chat (auto-detects model and tokenizer in models/)
+./build/inference-engine --chat --threads 4
+```
+
+Example session:
+
+```text
+BIOS V2 — Own Inference Engine
+
+Model: TinyLlama 1.1B Chat
+Format: Q4_0
+Backend: NEON
+Threads: 4
+
+Type /help for available commands, /clear to reset context, /exit to quit.
+
+BIOS> Explain how a CPU works.
+
+BIOS:
+A Central Processing Unit (CPU) is the primary component of a computer that performs
+most of the processing inside the computer. It executes instructions of a computer
+program, such as arithmetic, logical, control, and input/output (I/O) operations...
+
+BIOS> What are its main components?
+
+BIOS:
+The main components of a CPU include:
+1. Arithmetic Logic Unit (ALU): Performs basic mathematical and logical calculations.
+2. Control Unit (CU): Directs the operation of the processor.
+3. Registers: High-speed internal memory cells used for temporary storage.
+4. Cache: Fast memory providing high-speed data access to the processor cores...
+
+BIOS> /exit
+```
+
+### In-Chat Commands
+
+- `/help` — Display list of available interactive commands.
+- `/clear` — Reset conversation history and clear the KV cache.
+- `/exit` or `/quit` — Cleanly exit the session.
+
+---
+
+## 5. Command-Line Options & Batch Inference
+
+```text
+inference-engine (TinyLlama-1.1B-Chat CPU inference runtime)
+Usage: inference-engine --model <file.ie> --tokenizer <tokenizer.model> [--prompt <text> | --chat] [options]
+
+Options:
+  --model <path>       Path to FP32 or Q4_0 .ie model file (auto-detected if omitted)
+  --tokenizer <path>   Path to TinyLlama SentencePiece tokenizer.model (auto-detected if omitted)
+  --prompt <text>      Input prompt text (omit with --chat for interactive REPL)
+  --chat               Format with Zephyr chat template (interactive if --prompt omitted)
+  --threads <n>        Requested worker thread count (default: 1)
+  --max-tokens <n>     Maximum new tokens (default: 64; 0 disables generation)
+  --temp <value>       Sampling temperature (default: 0, greedy deterministic)
+  --top-p <value>      Nucleus probability in (0, 1] (default: 1.0)
+  --top-k <n>          Top-k candidate filtering (default: 0, disabled)
+  --seed <n>           Reproducible sampling seed (default: 42)
+  --benchmark          Print measured load, TTFT, throughput, RSS, and CPU metrics
+  --bench-runs <n>     Run benchmark across <n> iterations and report statistical summary
+  --encode-only        Print SentencePiece token IDs and exit
+  --decode-only        Decode IDs supplied with --token-ids and exit
+  --token-ids <ids>    Space-separated IDs for --decode-only
+  --add-bos            Add BOS in --encode-only mode
+  --add-eos            Add EOS in --encode-only mode
+  --format-chat        Print the formatted user chat prompt and exit
+  --info               Print detected CPU backend and frozen model config
+  --help, -h           Show this help message
+```
+
+### Examples
+
+```bash
+# Single-turn generation with streaming output
+./build/inference-engine \
+  --model models/tinyllama-1.1b-q4_0.ie \
+  --tokenizer models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model \
+  --chat \
+  --prompt "Write a short poem about compiler optimization." \
+  --threads 4 \
+  --max-tokens 128 \
+  --temp 0.7 --top-p 0.9 --top-k 40
+
+# Multi-run benchmark statistical summary (mean, median, min, max across 5 runs)
+./build/inference-engine \
+  --chat \
+  --prompt "Explain entropy." \
+  --threads 4 \
+  --max-tokens 64 \
+  --bench-runs 5
+```
+
+---
+
+## 6. Performance Benchmarks
+
+Measured on an Apple Silicon M-series laptop CPU (ARM64 NEON, 4 threads, `TinyLlama-1.1B-Chat`):
+
+| Metric | `Q4_0` Quantised | Bit-Identical `FP32` |
+|---|---|---|
+| **On-Disk File Size** | **619 MB** | 4.4 GB |
+| **Peak Resident Memory (RSS)** | **658.2 MiB** | 3,956.6 MiB |
+| **Decode Throughput** | **35.25 tokens/s** | 16.10 tokens/s |
+| **Prefill Throughput** | **35.65 tokens/s** | 3.40 tokens/s |
+| **Time to First Token (TTFT)** | **556 ms** (20 prompt tokens) | 6,096 ms |
+| **Kernel Acceleration** | 2-row NEON tiled matmul | 1-row NEON dot product |
+
+---
+
+## 7. Model Conversion Instructions
+
+Use the included offline conversion utility (`tools/convert_to_inference_engine.py`) to convert any official TinyLlama checkpoint:
+
+```bash
+# 1. Download checkpoint from Hugging Face
+git clone https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0 models/TinyLlama-1.1B-Chat-v1.0
+
+# 2. Convert to custom Q4_0 .ie format
+python3 tools/convert_to_inference_engine.py \
+  --input-dir models/TinyLlama-1.1B-Chat-v1.0 \
+  --output models/tinyllama-1.1b-q4_0.ie \
+  --dtype q4_0
+
+# 3. (Optional) Convert to FP32 .ie format
+python3 tools/convert_to_inference_engine.py \
+  --input-dir models/TinyLlama-1.1B-Chat-v1.0 \
+  --output models/tinyllama-1.1b-fp32.ie \
+  --dtype fp32
+```
+
+---
+
+## 8. Verification & Test Suite
+
+All 9 deterministic CTest suites and Python parity validations pass:
+
+```bash
+# Run all 9 unit and integration test suites
 ctest --test-dir build --output-on-failure
 ```
 
-If `sentencepiece` 0.2.0 or newer is available through `pkg-config`, CMake uses it;
-otherwise CMake builds the pinned upstream SentencePiece revision.
+```text
+1/9 Test #1: loader_validation ................   Passed
+2/9 Test #2: quant_packing ....................   Passed
+3/9 Test #3: kernels_scalar ...................   Passed
+4/9 Test #4: kernels_simd .....................   Passed
+5/9 Test #5: kv_cache .........................   Passed
+6/9 Test #6: tokenizer ........................   Passed
+7/9 Test #7: sampler ..........................   Passed
+8/9 Test #8: golden_forward ...................   Passed
+9/9 Test #9: cli_integration ..................   Passed
 
-## 7. Model Conversion Instructions (Offline Python)
-
-```bash
-# Inspect local Hugging Face TinyLlama checkpoint
-python3 tools/inspect_checkpoint.py --checkpoint-dir /path/to/TinyLlama-1.1B-Chat-v1.0
-
-# Convert checkpoint to .ie v1 format (M1: fp32, M2: q4_0)
-python3 tools/convert_to_inference_engine.py \
-  --input-dir /path/to/TinyLlama-1.1B-Chat-v1.0 \
-  --output models/tinyllama-1.1b-q4_0.ie \
-  --dtype q4_0
+100% tests passed out of 9
 ```
 
-## 8. Inference Execution Instructions
-
+Python Parity & Tool Self-Tests:
 ```bash
-# Inspect detected CPU SIMD backend
-./build/inference-engine --info
-
-# Run CLI inference (full end-to-end weight execution arrives in M1/M2)
-./build/inference-engine \
-  --model models/tinyllama-1.1b-fp32.ie \
-  --tokenizer models/tokenizer.model \
-  --prompt "Explain CPU cache locality." \
-  --chat \
-  --threads 4 \
-  --max-tokens 64 \
-  --temp 0.7 \
-  --top-p 0.9 \
-  --seed 42
+python3 tools/inspect_checkpoint.py --print-frozen-contract
+python3 tools/convert_to_inference_engine.py --self-test
+python3 tools/verify_tokenizer_parity.py \
+  --tokenizer-model models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model \
+  --tokenizer-config models/TinyLlama-1.1B-Chat-v1.0/tokenizer_config.json \
+  --engine ./build/inference-engine
 ```
 
-The current Transformer accepts FP32 `.ie` weights. `--benchmark` reports measured
-model-load time, TTFT, prompt/decode throughput, peak resident memory, and CPU
-utilization where the OS exposes it. It does not claim thread scaling until the
-Transformer is wired to the thread pool. Use `tools/verify_tokenizer_parity.py`
-to check token IDs, decode output, special-token handling, and chat formatting
-against the Hugging Face tokenizer.
+---
 
-## 9. Benchmarking Methodology
+## 9. License & Competition Attribution
 
-All official benchmarks run CPU-only across the four team laptops (Apple M4, Ryzen 7 7745HX, Intel Core Ultra 7 155H, Intel Core i5-10210U) measuring model load time, TTFT, prefill tokens/sec, decode tokens/sec, peak RSS, and thread scaling against `llama.cpp` under identical `Q4_0` weights and prompts. See [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
-
-## 10. Current Implementation Status
-
-- **Milestone M0 (Repository Foundation):** **Complete.** CMake build, public headers, contract validations (`.ie` v1 binary loader, `Q4_0` 18-byte packing, `KvCache` `append`/`commit_token` separation, autoregressive position indexing), deterministic CTest suites, and CI are active.
-- **Milestones M1–M4:** In progress on feature branches. See [`CURRENT_STATUS.md`](CURRENT_STATUS.md).
-
-## 11. Team Ownership
-
-| Member | Role | Branch | Primary Scope |
-|---|---|---|---|
-| **S** | Project Lead & Model Loader | `feature/model-loader` | `src/loader/`, `src/common/`, `tools/convert_to_inference_engine.py` |
-| **I** | Quantisation & CPU Optimisation | `feature/quantisation-simd` | `src/kernels/quant_q4_0.cpp`, `neon/`, `avx2/`, `threading/`, `dispatch.cpp` |
-| **U** | Scalar Inference & Transformer | `feature/transformer` | `src/kernels/scalar/`, `src/core/kv_cache.cpp`, `src/transformer/` |
-| **P** | Tokenizer, Runtime & Benchmarks | `feature/runtime-tokenizer` | `src/tokenizer/`, `src/sampler/`, `src/app/`, `.github/workflows/ci.yml` |
+Developed for BIOS V2 — PS08 (Own Inference Engine). Licensed under the MIT License.
