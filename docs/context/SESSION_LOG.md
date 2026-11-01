@@ -347,3 +347,42 @@
     - `/usr/bin/python3 tools/verify_transformer_q4.py`: PASSED (`cos_sim >= 0.996359`).
 - **Local Checkpoint Status:**
   - Local `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` remains at `325,472,256` bytes (310 MB / 2.20 GB, ~14.8%), awaiting resumption of download (`KI-004`). Real 22-layer execution is verified by Member U on complete checkpoint.
+
+---
+
+## Session 018 — 2026-11-01 (05:30–06:25 IST)
+- **Engineer / Agent:** Principal Systems Engineer & Implementation Lead (Antigravity)
+- **Branch:** `integration/m4-full-inference` (tracking `origin/integration-m4-full-inference`, HEAD: `e46c06e`)
+- **Objective:** Execute Milestone M5: acquire the complete bit-exact `TinyLlama/TinyLlama-1.1B-Chat-v1.0` checkpoint on local workstation, convert it into custom `.ie` v1 format (pure `Q4_0` and bit-identical `FP32`), execute end-to-end 22-layer streaming text generation across 5 real prompts, and measure CPU scaling and throughput on Apple Silicon NEON.
+- **Milestone M5 Deliverables & Verification Results:**
+  1. **M5.1 Checkpoint Ingestion:** Resumed HTTP byte range transfer of `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` from byte 325,472,256 to completion. Verified exact size of **2,200,119,864 bytes**. `python3 tools/inspect_checkpoint.py --checkpoint-dir models/TinyLlama-1.1B-Chat-v1.0` confirmed all 201/201 tensors and 10/10 frozen hyperparameter invariants (`KI-004` resolved).
+  2. **M5.2 Model Conversion:**
+     - Pure `Q4_0`: `models/tinyllama-1.1b-q4_0.ie` (`619,113,792` bytes). Error stats across 1,099,956,224 elements: `MAE = 1.385e-3`, `RMSE = 1.744e-3`, `MaxAbsErr = 0.1875`, `Rel L2 = 0.0883`.
+     - Bit-identical `FP32`: `models/tinyllama-1.1b-fp32.ie` (`4,400,213,312` bytes).
+     - Verified 64-byte alignment across all 201 tensors with zero gaps/overlaps via `inspect_checkpoint.py --ie-file`.
+  3. **M5.3 Real 22-Layer End-to-End Inference:**
+     - Verified full autoregressive generation across all 5 standard test prompts using `./build/inference-engine`:
+       1. "Hello, introduce yourself." $\to$ Coherent English response ("I am a machine learning engineer...").
+       2. "Explain how a CPU executes an instruction." $\to$ Coherent 3-step breakdown (fetch, decode, execute).
+       3. "What is a neural network?" $\to$ Accurate definitions of nodes, weighted connections, and layers.
+       4. "Explain the difference between RAM and storage." $\to$ Accurate distinction between volatile execution memory and persistent storage.
+       5. "Tell me a short fact about space." $\to$ Fluent galactic star population fact.
+     - Real-time incremental prefix-diff detokenisation flushes tokens smoothly without latency spikes or missing spaces (`KI-017` verified).
+  4. **M5.4 Benchmarking & Profiling on Apple Silicon NEON (10-core M-series):**
+     - **Thread Scaling (`Q4_0`):**
+       - 1 Thread: TTFT = 2952.6 ms, Prefill = 8.5 tok/s, Decode = 12.5 tok/s, RSS = 644.0 MiB, CPU = 84%
+       - 2 Threads: TTFT = 1063.2 ms (2.78x), Prefill = 23.5 tok/s, Decode = 22.9 tok/s, RSS = 658.3 MiB, CPU = 194%
+       - 4 Threads: TTFT = 707.5 ms (4.17x), Prefill = 35.3 tok/s, Decode = 34.5 tok/s, RSS = 658.3 MiB, CPU = 368%
+       - 8 Threads: TTFT = 640.2 ms (4.61x), Prefill = 39.1 tok/s, Decode = 36.0 tok/s, RSS = 658.4 MiB, CPU = 553%
+     - **FP32 vs Q4_0 Comparison (4 Threads):**
+       - `FP32`: TTFT = 6096.8 ms, Prefill = 3.4 tok/s, Decode = 16.1 tok/s, Peak RSS = 3956.6 MiB
+       - `Q4_0`: TTFT = 621.0 ms (**9.8x faster TTFT**), Prefill = 35.8 tok/s (**10.5x faster prefill**), Decode = 35.2 tok/s (**2.2x faster decode**), Peak RSS = 658.3 MiB (**6.0x lower RAM**)
+     - **Microbenchmarks (`inference_engine_bench`):**
+       - Attention Q (2048x2048): Scalar 0.865 ms vs NEON 4T 0.142 ms (**6.09x speedup**, 59.0 GFLOPS, 16.6 GB/s)
+       - SwiGLU Up (5632x2048): Scalar 2.611 ms vs NEON 4T 0.306 ms (**8.54x speedup**, 75.5 GFLOPS, 21.2 GB/s)
+       - SwiGLU Down (2048x5632): Scalar 2.706 ms vs NEON 4T 0.305 ms (**8.89x speedup**, 75.8 GFLOPS, 21.3 GB/s)
+       - LM Head (32000x2048): Scalar 13.382 ms vs NEON 8T 1.147 ms (**11.66x speedup**, 114.2 GFLOPS, 32.1 GB/s)
+  5. **Regression & CI State:**
+     - Local CTest: **9 / 9 suites passed (100%)** in 1.95s.
+     - Remote CI: GitHub Actions run `41255038648` on PR #6 passed 100% across Ubuntu GCC, macOS AppleClang, and Hugging Face Tokenizer Parity.
+
