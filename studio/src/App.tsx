@@ -103,7 +103,7 @@ export const App: React.FC = () => {
       } else if (type === 'generation_started') {
         setIsGenerating(true);
       } else if (type === 'token') {
-        const text = event.text || '';
+        const chunk = event.delta !== undefined ? event.delta : (event.text || '');
         const tokenMetrics = event.metrics as GenerationMetrics;
         if (tokenMetrics) {
           setLatestMetrics(tokenMetrics);
@@ -116,18 +116,33 @@ export const App: React.FC = () => {
         }
 
         setMessages((prev) => {
-          if (!activeMessageIdRef.current) return prev;
-          return prev.map((msg) => {
-            if (msg.id === activeMessageIdRef.current) {
+          const targetId = activeMessageIdRef.current;
+          let found = false;
+          const updated = prev.map((msg) => {
+            if ((targetId && msg.id === targetId) || (!targetId && msg.role === 'assistant' && msg.isStreaming)) {
+              found = true;
               return {
                 ...msg,
-                content: msg.content + text,
+                content: msg.content + chunk,
                 isStreaming: true,
                 metrics: tokenMetrics || msg.metrics,
               };
             }
             return msg;
           });
+          if (!found && prev.length > 0 && prev[prev.length - 1].role === 'assistant') {
+            const last = prev[prev.length - 1];
+            return [
+              ...prev.slice(0, -1),
+              {
+                ...last,
+                content: last.content + chunk,
+                isStreaming: true,
+                metrics: tokenMetrics || last.metrics,
+              },
+            ];
+          }
+          return updated;
         });
       } else if (type === 'generation_completed' || type === 'generation_cancelled') {
         setIsGenerating(false);
@@ -136,27 +151,46 @@ export const App: React.FC = () => {
           setLatestMetrics(finalMetrics);
         }
 
+        const fullText = event.text || '';
         setMessages((prev) => {
-          if (!activeMessageIdRef.current) return prev;
-          return prev.map((msg) => {
-            if (msg.id === activeMessageIdRef.current) {
+          const targetId = activeMessageIdRef.current;
+          let found = false;
+          const updated = prev.map((msg) => {
+            if ((targetId && msg.id === targetId) || (!targetId && msg.role === 'assistant')) {
+              found = true;
               return {
                 ...msg,
+                content: fullText && fullText.length >= msg.content.length ? fullText : (msg.content || fullText),
                 isStreaming: false,
                 metrics: finalMetrics || msg.metrics,
               };
             }
             return msg;
           });
+          if (!found && prev.length > 0 && prev[prev.length - 1].role === 'assistant') {
+            const last = prev[prev.length - 1];
+            return [
+              ...prev.slice(0, -1),
+              {
+                ...last,
+                content: fullText && fullText.length >= last.content.length ? fullText : (last.content || fullText),
+                isStreaming: false,
+                metrics: finalMetrics || last.metrics,
+              },
+            ];
+          }
+          return updated;
         });
         activeMessageIdRef.current = null;
       } else if (type === 'generation_error') {
         setIsGenerating(false);
         const errMsg = event.error || 'Engine generation error occurred';
         setMessages((prev) => {
-          if (!activeMessageIdRef.current) return prev;
-          return prev.map((msg) => {
-            if (msg.id === activeMessageIdRef.current) {
+          const targetId = activeMessageIdRef.current;
+          let found = false;
+          const updated = prev.map((msg) => {
+            if ((targetId && msg.id === targetId) || (!targetId && msg.role === 'assistant')) {
+              found = true;
               return {
                 ...msg,
                 content: msg.content ? `${msg.content}\n\n[Error: ${errMsg}]` : `[Error: ${errMsg}]`,
@@ -165,6 +199,18 @@ export const App: React.FC = () => {
             }
             return msg;
           });
+          if (!found && prev.length > 0 && prev[prev.length - 1].role === 'assistant') {
+            const last = prev[prev.length - 1];
+            return [
+              ...prev.slice(0, -1),
+              {
+                ...last,
+                content: last.content ? `${last.content}\n\n[Error: ${errMsg}]` : `[Error: ${errMsg}]`,
+                isStreaming: false,
+              },
+            ];
+          }
+          return updated;
         });
         activeMessageIdRef.current = null;
       } else if (type === 'benchmark_progress') {
@@ -208,12 +254,14 @@ export const App: React.FC = () => {
       isStreaming: true,
     };
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    const updatedMessages = [...messages, userMsg];
+    setMessages([...updatedMessages, assistantMsg]);
     setIsGenerating(true);
 
     try {
       await sendChat({
         prompt: content.trim(),
+        messages: updatedMessages.map((m) => ({ role: m.role, content: m.content })),
         temperature: genConfig.temperature,
         top_p: genConfig.top_p,
         top_k: genConfig.top_k,

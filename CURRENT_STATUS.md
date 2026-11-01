@@ -36,6 +36,11 @@
   - **M8.5 Dedicated Benchmark Lab:** Configurable multi-run benchmark runner with live progress, statistical aggregation (mean, median, min, max, stddev), and pass/fail baseline comparison against historical M6/M7 baselines.
   - **M8.6 Zero External Runtimes:** Sole source of inference is the custom C++17 engine. Zero runtime dependencies on PyTorch, LibTorch, llama.cpp, Ollama, or MLX.
   - **M8.7 End-to-End Hardware Verification:** Verified real prompt streaming, KV cache prefix reuse (30 tokens reused on Turn 2), benchmark SSE streaming, and 9/9 CTest pass rate. Documented in `ADR-014`.
+- **Milestone M9 (Pitch Technical Mastery & Engineering Defense Manuals):** **COMPLETE & VERIFIED:**
+  - **M9.1 Master Technical Guide (`docs/PITCH_TECHNICAL_MASTERY.md`):** Complete 11-chapter technical manual covering project scope, 15-stage end-to-end pipeline, TinyLlama architecture, Q4_0 block quantization mathematics, `.ie` v1 format and `mmap` zero-copy loader, CPU optimization (NEON, AVX2, 2-row tiling, thread pool), KV cache prefix matching and truncation, Inference Studio architecture, benchmark methodology, and consolidated ADR engineering trade-offs.
+  - **M9.2 Source Code Walkthrough (`docs/PITCH_CODE_WALKTHROUGH.md`):** Granular subsystem walkthrough for model loader, quantization, tensor representation, Transformer forward pass, attention/GQA, KV cache, CPU kernels, thread pool, tokenizer/sampler, studio worker, Node.js gateway, and React 19 frontend with exact line references, variables, and code excerpts.
+  - **M9.3 Judge Question Bank (`docs/PITCH_JUDGE_QUESTIONS.md`):** 65 battle-tested technical questions categorized across basic concepts, architecture, math, implementation, performance, critical systems engineering, and adversarial judge queries, complete with 20-second elevator summaries, deep proofs, source references, and follow-ups.
+  - **M9.4 Team Pitch Crash Course (`docs/PITCH_TEAM_CRASH_COURSE.md`):** 2 hour 15 minute rehearsal sequence with explicit speaker ownership mapping (Members S, I, U, P), 30-min overview, 60-min deep walkthrough, 30-min drill, and 15-min whiteboard diagrams. Verified 100% against code and 9/9 passing CTest suites.
 
 ---
 

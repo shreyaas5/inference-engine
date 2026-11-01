@@ -287,6 +287,7 @@ export function subscribeSSE(onEvent: (event: any) => void): () => void {
 
 export async function sendChat(payload: {
   prompt: string;
+  messages?: Array<{ role: string; content: string }>;
   temperature?: number;
   top_p?: number;
   top_k?: number;
@@ -294,11 +295,16 @@ export async function sendChat(payload: {
   threads?: number;
   stream?: boolean;
 }) {
+  const messagesToSend =
+    payload.messages && payload.messages.length > 0
+      ? payload.messages
+      : [{ role: 'user', content: payload.prompt }];
+
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      messages: [{ role: 'user', content: payload.prompt }],
+      messages: messagesToSend,
       temperature: payload.temperature ?? 0.7,
       top_p: payload.top_p ?? 0.9,
       top_k: payload.top_k ?? 40,

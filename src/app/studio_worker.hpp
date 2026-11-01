@@ -1120,6 +1120,7 @@ private:
         ss << "{\"event\":\"token\",\"request_id\":\"" << json_escape(req_id) << "\""
            << ",\"token_id\":" << token_id
            << ",\"delta\":\"" << json_escape(delta) << "\""
+           << ",\"text\":\"" << json_escape(delta) << "\""
            << ",\"generated_tokens\":" << generated_count
            << ",\"metrics\":{"
            << "\"ttft_ms\":" << fmt_double(ttft_ms, 3)
