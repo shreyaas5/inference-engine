@@ -379,3 +379,4 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
     </div>
   );
 };
+

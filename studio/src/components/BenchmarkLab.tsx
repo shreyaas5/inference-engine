@@ -425,3 +425,4 @@ export const BenchmarkLab: React.FC<BenchmarkLabProps> = ({
     </div>
   );
 };
+

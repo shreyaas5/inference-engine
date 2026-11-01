@@ -329,3 +329,4 @@ export const ModelInspector: React.FC<ModelInspectorProps> = ({ model }) => {
     </div>
   );
 };
+

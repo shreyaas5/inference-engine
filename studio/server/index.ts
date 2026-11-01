@@ -278,7 +278,20 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { error: `Not found: ${pathname}` });
 });
 
+server.on('error', (err: any) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[BIOS V2 Studio API] Port ${PORT} is already in use.`);
+    console.error(`To terminate any existing studio process on port ${PORT}, run:`);
+    console.error(`  lsof -ti :${PORT} | xargs kill -9`);
+    console.error(`Or set a different port with: PORT=3001 npm start`);
+  } else {
+    console.error(`[BIOS V2 Studio API] Server error:`, err);
+  }
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
   console.log(`[BIOS V2 Studio API] Server listening on http://${HOST}:${PORT}`);
   manager.addLog('INFO', 'studio-api', `Inference Studio API server listening on http://${HOST}:${PORT}`);
 });
+

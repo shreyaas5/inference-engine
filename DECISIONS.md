@@ -223,5 +223,5 @@
   - Embedded C++ HTTP server (e.g. `cpp-httplib` or `boost::beast`): Rejected to keep the core engine focused strictly on tensor computation, SIMD acceleration, and memory-safe model execution without networking dependencies.
   - Spawning CLI on every prompt: Rejected due to cold-start overhead and loss of conversational KV cache prefix matching.
 - **Consequences:**
-  Zero IPC overhead; model loading occurs once (0.34 ms); subsequent prompt evaluations begin immediately. Multi-turn chat reuses KV cache prefixes (30+ tokens reused, dropping latency). Decode throughput achieves ~35.5 tokens/sec on ARM64 NEON. 100% test pass rate across all 9 CTest suites. Zero external inference runtimes.
+  Low-latency stdio pipe IPC; model loading occurs once (0.34 ms); subsequent prompt evaluations begin immediately. Multi-turn chat reuses KV cache prefixes (30+ tokens reused, dropping latency). Decode throughput achieves ~35.5 tokens/sec on ARM64 NEON. 100% test pass rate across all 9 CTest suites. Zero external inference runtimes.
 

@@ -414,7 +414,7 @@
      - Supports commands: `status`, `chat`, `stop`, `clear`, `configure`, `benchmark`, `shutdown`.
      - Real OS telemetry instrumentation: captures resident RAM footprint via `mach_task_basic_info` (Darwin) / `/proc/self/statm` (Linux) and CPU utilization via `getrusage()`.
   2. **Node.js API Gateway & SSE Event Hub (`studio/server/index.ts`, `studio/server/engineManager.ts`):**
-     - Spawns and manages `inference-engine --studio-worker` persistent child process with zero IPC overhead.
+     - Spawns and manages `inference-engine --studio-worker` persistent child process over low-latency streaming pipes.
      - Implements Server-Sent Events stream at `/api/events` broadcasting fine-grained execution events (`generation_started`, `token`, `generation_completed`, `generation_cancelled`, `context_cleared`, `benchmark_progress`, `benchmark_completed`, `log`).
      - Exposes REST endpoints: `/api/health`, `/api/model`, `/api/system`, `/api/chat`, `/api/chat/stop`, `/api/chat/clear`, `/api/configure`, `/api/benchmark`, `/api/benchmark/history`, `/api/logs`, `/api/logs/clear`.
      - Serves built production frontend assets directly from `studio/dist/`.

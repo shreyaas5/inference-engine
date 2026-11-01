@@ -210,18 +210,21 @@ Transform the engine into a full-stack local workstation with a high-density ter
 ### Quickstart
 
 ```bash
+# One-command workstation launch (verifies C++ build, model assets, ports, and launches UI)
+./start_studio.sh
+
+# Open workstation in browser:
+# http://localhost:3000
+```
+
+Alternatively, launch manually:
+```bash
 # 1. Build C++ engine (if not already built)
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DINFERENCE_ENGINE_BUILD_TESTS=ON
 cmake --build build --parallel 4
 
 # 2. Launch Inference Studio
-cd studio
-npm install
-npm run build
-npm start
-
-# 3. Open workstation in browser
-# http://localhost:3000
+cd studio && npm install && npm run build && npm start
 ```
 
 ---

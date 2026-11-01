@@ -232,3 +232,4 @@ export const NavigationSidebar: React.FC<NavigationSidebarProps> = ({
     </aside>
   );
 };
+

@@ -49,20 +49,17 @@ cmake --build build --parallel 4
 # 2. Run all 9 CTest test suites
 ctest --test-dir build --output-on-failure
 
-# 3. Build and launch Inference Studio
-cd studio
-npm install
-npm run build
-npm start
+# 3. Launch Inference Studio with one verified command
+./start_studio.sh
 # Workstation accessible at http://localhost:3000
 
 # 4. Smoke test CLI help and info
 ./build/inference-engine --info
 ./build/inference-engine --help
-```
-  --tokenizer-model models/TinyLlama-1.1B-Chat-v1.0/tokenizer.model \
-  --tokenizer-config models/TinyLlama-1.1B-Chat-v1.0/tokenizer_config.json \
-  --engine ./build/inference-engine
+
+# 5. Verify Python tokenizer and converter parity
+python3 tools/convert_to_inference_engine.py --self-test
+python3 tools/verify_tokenizer_parity.py --self-test
 ```
 
 ---

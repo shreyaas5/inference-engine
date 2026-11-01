@@ -151,3 +151,4 @@ export interface GenerationConfig {
   backend: string;
   model_path: string;
 }
+

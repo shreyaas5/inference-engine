@@ -1,8 +1,8 @@
 # `CURRENT_STATUS.md` — Single Source of Truth for Project Status
 
-> **Last Updated:** 2026-11-01T14:20:00+05:30  
+> **Last Updated:** 2026-11-01T14:35:00+05:30  
 > **Current Active Branch:** `integration/m4-full-inference`  
-> **Consolidated Integration Baseline:** `integration/m4-full-inference` (HEAD: `90cb789` + M8 Inference Studio, branched from `main` at `5657d9278b2f59e1f1ae0605baf1543cb860fde7`)  
+> **Consolidated Integration Baseline:** `integration/m4-full-inference` (HEAD: `244f78a` + M8 Emergency Pitch Finalisation, branched from `main` at `5657d9278b2f59e1f1ae0605baf1543cb860fde7`)  
 > **Protected / Shared Baselines:** `main` (`5657d92`), `origin/integration` (`783b8f4`), PR #6 open  
 > **Integrated Feature Branches (All Feature Branches Fully Merged / Superseded):**  
 > - Member U: `origin/feature/transformer-runtime` (`fb6420b` — RoPE precomputation, `forward_prompt` API, real TinyLlama E2E validation)  
