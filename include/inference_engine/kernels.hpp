@@ -19,6 +19,11 @@ void rope_inplace_f32(float* qk,
                       size_t head_dim,
                       uint32_t pos,
                       float rope_theta) noexcept;
+void rope_inplace_cached_f32(float* qk,
+                             size_t num_heads,
+                             size_t head_dim,
+                             const float* cos_row,
+                             const float* sin_row) noexcept;
 void matmul_f32(float* out,
                 const float* weight,
                 const float* x,

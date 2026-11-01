@@ -73,6 +73,18 @@ Status KvCache::commit_positions(uint32_t count) noexcept {
     return Status::Ok();
 }
 
+Status KvCache::truncate(uint32_t new_len) noexcept {
+    if (!initialized_) {
+        return Status::Error(StatusCode::InvalidArgument, "KvCache is not initialized");
+    }
+    if (new_len > committed_seq_len_) {
+        return Status::Error(StatusCode::InvalidArgument,
+                             "Cannot truncate to a position greater than current seq_len");
+    }
+    committed_seq_len_ = new_len;
+    return Status::Ok();
+}
+
 const float* KvCache::key_vector(uint32_t layer_idx, uint32_t pos) const noexcept {
     if (!initialized_ || layer_idx >= num_layers_ || pos >= max_seq_len_) {
         return nullptr;

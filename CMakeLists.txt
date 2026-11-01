@@ -36,6 +36,9 @@ else()
     )
     FetchContent_MakeAvailable(sentencepiece)
     set(INFERENCE_ENGINE_SENTENCEPIECE_TARGET sentencepiece-static)
+    if(TARGET sentencepiece-static AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(sentencepiece-static PRIVATE -include cstdint)
+    endif()
 endif()
 
 set(INFERENCE_ENGINE_CORE_SOURCES
@@ -100,6 +103,9 @@ if(WIN32)
     target_link_libraries(inference-engine PRIVATE Psapi)
 endif()
 
+add_executable(inference_engine_bench benchmarks/bench_kernels.cpp)
+target_link_libraries(inference_engine_bench PRIVATE inference_engine_core)
+
 if(INFERENCE_ENGINE_BUILD_TESTS)
     enable_testing()
 
@@ -113,6 +119,7 @@ if(INFERENCE_ENGINE_BUILD_TESTS)
         tests/test_tokenizer.cpp
         tests/test_sampler.cpp
         tests/test_golden_forward.cpp
+        tests/test_cli_integration.cpp
     )
 
     target_link_libraries(inference_engine_tests PRIVATE inference_engine_core)
@@ -132,6 +139,7 @@ if(INFERENCE_ENGINE_BUILD_TESTS)
         tokenizer
         sampler
         golden_forward
+        cli_integration
     )
 
     foreach(SUITE_NAME IN LISTS INFERENCE_ENGINE_TEST_SUITES)

@@ -1,7 +1,8 @@
 # `NEXT_ACTIONS.md` — Dependency-Ordered Engineering Backlog
 
-> **Last Updated:** 2026-11-01
-> **Consolidated Baseline:** `integration-ps08-team-sync-2026-10-31` (`33d4bdc4486e83f458b6a242d9a2fd051503e6ff`)
+> **Last Updated:** 2026-11-01  
+> **Consolidated Baseline:** `integration/m4-full-inference` (`e46c06e`)  
+> **Active Milestone:** Milestone M5 (Real TinyLlama 22-Layer End-to-End Streaming Delivery)
 
 ---
 
@@ -12,32 +13,27 @@
 - [x] **M1 — Member U (`5115467`):** Scalar reference kernels (`rmsnorm`, `rope_inplace`, `attention_gqa`, `swiglu`, `matmul_f32`), `KvCache` (`append` vs `commit_token`), 16-step `FP32` `TransformerEngine::forward_token()`, `generate_golden_reference.py`, `kernels_scalar` (`7/7`), `kv_cache` (`4/4`), `golden_forward` (`3/3`).
 - [x] **M2 — Member S (`cb176b3`, `4515579`):** `Q4_0` and `--keep-embeddings-fp32` converter, `TensorView::data_q4_0()`, unified `TransformerWeightBindings` (`ADR-009`), live 201-tensor inspection and 9-role real `Q4_0` error audit (`inspect_checkpoint.py --eval-real-quant-error`).
 - [x] **M2 — Member U (`955bd91`, `ce1026a`):** `Q4_0` and mixed-precision `TransformerEngine::forward_token()`, single-row `Q4_0` embedding dequantisation, `dispatch_matmul_*` + `ThreadPool` wiring, `transformer_q4` CTest (`7/7`), `verify_transformer_q4.py` (`cos_sim >= 0.996359`).
-- [x] **M2/M3 — Member I (`f76ab55`, `58c604d`, `b05c4e4`):** `Q4_0` block packing, FP16$\leftrightarrow$FP32, NEON & AVX2 SIMD kernels, `ThreadPool` with `std::exception_ptr` (`ADR-010`), native Ryzen 7 7745HX verification, AVX2 2-row register tiling + vectorized scale accumulation + contiguous 2-row `dispatch.cpp` chunk scheduling + `inference_engine_bench` CSVs (`ADR-012` on `origin/feature/cpu-kernel-optimisation`).
-- [x] **M2/M3 — Member P (`ce769c8`, `5929a17`, `33d4bdc`):** SentencePiece C++ `Tokenizer` (dual processor, special tokens, Zephyr chat template, `15/15` parity on real `tokenizer.model`), `Sampler` (greedy, temp, top-p, 64-bit `xorshift*`), CLI generation loop & `--benchmark` harness, GitHub Actions CI (`ubuntu-22.04` + `macos-latest`).
+- [x] **M2/M3 — Member I (`f76ab55`, `58c604d`, `b05c4e4`, `1c046cb`):** `Q4_0` block packing, FP16$\leftrightarrow$FP32, NEON & AVX2 SIMD kernels, `ThreadPool` with `std::exception_ptr` (`ADR-010`), native Ryzen 7 7745HX verification, AVX2 2-row register tiling + vectorized scale accumulation + contiguous 2-row `dispatch.cpp` chunk scheduling + `inference_engine_bench` CSVs (`ADR-012`), ARM64 NEON 2-row register tiling port & benchmark calculation audit (`1c046cb`).
+- [x] **M2/M3 — Member P (`ce769c8`, `5929a17`, `33d4bdc`, `758abac`, `b96b805`, `da21d62`):** SentencePiece C++ `Tokenizer` (dual processor, special tokens, Zephyr chat template, `15/15` parity on real `tokenizer.model`, subsegment encoding), `Sampler` (greedy, temp, top-p, 64-bit `xorshift*`), CLI generation loop & `--benchmark` harness, GitHub Actions CI (`ubuntu-22.04` + `macos-latest`).
+- [x] **M4 Consolidation (`97cf8c3`, `e46c06e`):** Consolidated U, I, P feature branches into `integration/m4-full-inference`, tracking `origin/integration-m4-full-inference`, opened PR #6 with 100% CI pass.
+- [x] **M5 Checkpoint & Conversion:** Acquired full `TinyLlama/TinyLlama-1.1B-Chat-v1.0` weights (`model.safetensors`, `2,200,119,864` bytes). Converted and validated `models/tinyllama-1.1b-q4_0.ie` (`619,113,792` bytes) and `models/tinyllama-1.1b-fp32.ie` (`4,400,213,312` bytes).
+- [x] **M5 End-to-End Real Inference:** Executed full 22-layer real forward pass with real-time streaming detokenization across 5 test prompts. Verified coherent English text output, zero NaNs, and zero memory corruption.
+- [x] **M5 Hardware Benchmarking:** Verified thread scaling (`1, 2, 4, 8` threads) and SIMD microbenchmarks on Apple Silicon NEON (up to 36 tok/s decode, 114.2 GFLOPS).
+- [x] **M6 Productisation & Release:** Repository-wide branch synchronisation (zero lost commits); interactive multi-turn chat REPL (`BIOS> `); KV-cache prefix matching and `KvCache::truncate()`; Top-K candidate filtering in Sampler; `--bench-runs <N>` multi-iteration statistical summary; auto-discovery of default model/tokenizer; robust error diagnostics; comprehensive documentation overhaul in `README.md` and `DECISIONS.md` (`ADR-013`). Product Ready.
+- [x] **M7 Release Validation & Final Demo Readiness:** Clean-checkout test, CI green across Ubuntu x86_64 and macOS ARM64, reproducibility verified.
+- [x] **M8 Inference Studio (Interactive Workstation & Observability):** Persistent C++ telemetry worker mode (`--studio-worker`), zero-copy model residency, real OS RAM/CPU telemetry, Node.js API gateway with Server-Sent Events (`/api/events`), and terminal-inspired React 19 + TypeScript workstation frontend with live SVG throughput charting, KV-cache monitor, Model Inspector (all 201 tensors), and Benchmark Lab with statistical aggregation against historical baselines. Documented in `ADR-014`.
+- [x] **M9 Pitch Technical Mastery & Defense Manuals:** Created master technical pitch defense suite: `docs/PITCH_TECHNICAL_MASTERY.md` (11 chapters), `docs/PITCH_CODE_WALKTHROUGH.md` (subsystem-by-subsystem implementation guide), `docs/PITCH_JUDGE_QUESTIONS.md` (65 technical judge questions & defenses), and `docs/PITCH_TEAM_CRASH_COURSE.md` (4-module rehearsal sequence with exact speaker ownership and whiteboard diagrams). All claims verified against C++17 source code and 9/9 passing CTest suites.
 
 ---
 
-## 2. Active Priority Backlog (`P0` $\rightarrow$ `P3`)
+## 2. Active Priority Backlog (`P0` $\rightarrow$ `P2`)
 
-### `P0` — Project-Blocking Integration & Full-Checkpoint Verification
-- [ ] **`P0-1` (Owner: S):** Merge Member U's `origin/feature/transformer-runtime` (`e64078c` — GCC 16 `-include cstdint` fix for `sentencepiece-static`) and Member I's `origin/feature/cpu-kernel-optimisation` (`b05c4e4` — AVX2 2-row register tiling, vectorized scale accumulation, contiguous 2-row `dispatch.cpp` chunking, `inference_engine_bench`) into the consolidated integration baseline while preserving `tests/test_tokenizer.cpp` and reconciled docs (`KI-015`).
-- [ ] **`P0-2` (Owner: S):** Resume and complete the download of `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` (`2,200,120,064` bytes total; currently `325,472,256` bytes on disk) (`KI-004`), verify with `python3 tools/inspect_checkpoint.py --checkpoint-dir models/TinyLlama-1.1B-Chat-v1.0`, and export all three 22-layer `.ie` models:
-  - `models/tinyllama-fp32.ie` (`4,400,213,312` bytes)
-  - `models/tinyllama-q4_0.ie` (`619,113,792` bytes)
-  - `models/tinyllama-q4_0-mixed.ie` (`1,069,673,792` bytes)
-- [ ] **`P0-3` (Owner: U):** Once `model.safetensors` is complete, run `python3 tools/generate_golden_reference.py --model-id models/TinyLlama-1.1B-Chat-v1.0 --output-dir tests/fixtures/golden` and execute full 22-layer `TransformerEngine::forward_token` parity validation on `FP32`, pure `Q4_0`, and mixed `Q4_0` checkpoints.
-- [ ] **`P0-4` (Owner: P):** Once the 22-layer `.ie` models are exported, run the full 22-layer TinyLlama CLI generation & `--benchmark` matrix (`1, 2, 4, 8` threads; `FP32` vs `Q4_0`) and populate `docs/BENCHMARKING.md` with measured TTFT, prefill tok/s, decode tok/s, CPU utilization %, and Peak RSS MB.
+### `P0` — Baseline Merge
+- [ ] **`P0-1` (Owner: Lead):** Merge PR #6 (`integration-m4-full-inference`) into `main` after review.
 
-### `P1` — Required for Next Major Milestone (Unblocked Immediately)
-- [ ] **`P1-1` (Owner: I):** Port vectorized per-block scale accumulation (single end-of-row `vaddvq_f32`) and 2-row register tiling (`m` and `m + 1`) from `src/kernels/avx2/kernels_avx2.cpp` (`b05c4e4`) to `src/kernels/neon/kernels_neon.cpp` (`neon::dot_q4_0_f32`, `neon::matmul_q4_0_f32`, `neon::matmul_f32`) (`KI-016`).
-- [ ] **`P1-2` (Owner: I):** Update `benchmarks/bench_kernels.cpp` to select the active SIMD backend dynamically via `detect_best_backend()` instead of hardcoding `SimdBackend::Avx2`, and capture Apple Silicon NEON kernel benchmark CSVs (`KI-016`).
-- [ ] **`P1-3` (Owner: P):** Implement incremental per-token streaming detokenisation inside the decode loop in `src/app/main.cpp` using prefix-diff decoding (`KI-017`).
+### `P1` — Cross-Platform Validation
+- [ ] **`P1-1` (Owner: I):** Run `inference_engine_bench` and real-model CLI benchmarks on x86_64 AVX2 machine to complete hardware matrix.
 
-### `P2` — Important Engineering Improvements
-- [ ] **`P2-1` (Owner: U):** Precompute RoPE $(\cos\theta, \sin\theta)$ lookup tables (`[max_seq_len, head_dim / 2]`) in `TransformerEngine::init()` (`KI-006`) and parallelize `attention_gqa` across query heads for long contexts (`KI-014`).
-- [ ] **`P2-2` (Owner: I):** Add an adaptive thread/chunk cap in `src/kernels/dispatch.cpp` for small output dimensions (`out_dim <= 256`) where 16T SMT wake-up overhead exceeds 8T physical-core latency, and reconcile the minor prefetch CSV text figures and machine-local links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` (`KI-018`).
-- [ ] **`P2-3` (Owner: P):** Add `--bench-runs <N>` (multi-iteration warmup + median/p95 summary) to `src/app/main.cpp` and add an automated synthetic CLI smoke test to CTest.
-
-### `P3` — Optional Polish
-- [ ] **`P3-1` (Owner: S):** Optional `posix_madvise(..., POSIX_MADV_WILLNEED)` prefault flag in `MmapModelLoader::open()`.
-- [ ] **`P3-2` (Owner: P):** Optional `--top-k` / `--repeat-penalty` sampling parameters in `Sampler`.
+### `P2` — Polish & Future Enhancements
+- [ ] **`P2-1` (Owner: U):** Parallelize `attention_gqa` for long contexts (`pos >= 256`) via ThreadPool (`KI-014`).
+- [ ] **`P2-2` (Owner: S):** Optional `posix_madvise(..., POSIX_MADV_WILLNEED)` prefault flag in `MmapModelLoader::open()`.

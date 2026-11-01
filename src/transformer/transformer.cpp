@@ -85,6 +85,22 @@ Status TransformerEngine::init(const ModelConfig& config,
     ffn_act_.assign(config.intermediate_dim, 0.0f);
     scores_.assign(config.max_seq_len, 0.0f);
 
+    // Precompute RoPE cos/sin lookup tables across all valid sequence positions (KI-006)
+    const size_t half_dim = config.head_dim / 2;
+    const size_t total_rope_entries = static_cast<size_t>(config.max_seq_len) * half_dim;
+    rope_cos_.resize(total_rope_entries);
+    rope_sin_.resize(total_rope_entries);
+    for (uint32_t p = 0; p < config.max_seq_len; ++p) {
+        float* cos_row = rope_cos_.data() + static_cast<size_t>(p) * half_dim;
+        float* sin_row = rope_sin_.data() + static_cast<size_t>(p) * half_dim;
+        for (size_t i = 0; i < half_dim; ++i) {
+            const float freq = 1.0f / std::pow(config.rope_theta, static_cast<float>(2 * i) / static_cast<float>(config.head_dim));
+            const float angle = static_cast<float>(p) * freq;
+            cos_row[i] = std::cos(angle);
+            sin_row[i] = std::sin(angle);
+        }
+    }
+
     config_ = config;
     loader_ = loader;
     backend_ = backend;
@@ -171,9 +187,12 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
         matmul(k_.data(), lw.k_proj, norm_buf_.data(), kv_dim, hidden_dim);
         matmul(v_.data(), lw.v_proj, norm_buf_.data(), kv_dim, hidden_dim);
 
-        // 2c. RoPE for Q and K
-        scalar::rope_inplace_f32(q_.data(), config_.num_query_heads, config_.head_dim, pos, config_.rope_theta);
-        scalar::rope_inplace_f32(k_.data(), config_.num_kv_heads, config_.head_dim, pos, config_.rope_theta);
+        // 2c. RoPE for Q and K (using precomputed cos/sin tables to avoid per-token trig)
+        const size_t half_dim = config_.head_dim / 2;
+        const float* cos_row = rope_cos_.data() + static_cast<size_t>(pos) * half_dim;
+        const float* sin_row = rope_sin_.data() + static_cast<size_t>(pos) * half_dim;
+        scalar::rope_inplace_cached_f32(q_.data(), config_.num_query_heads, config_.head_dim, cos_row, sin_row);
+        scalar::rope_inplace_cached_f32(k_.data(), config_.num_kv_heads, config_.head_dim, cos_row, sin_row);
 
         // 2d. KV-Cache Write (append without advancing committed sequence length)
         Status app_st = kv_cache_.append(layer_idx, pos, k_.data(), v_.data());
@@ -222,6 +241,41 @@ Status TransformerEngine::forward_token(int32_t token_id, uint32_t pos, float* o
     scalar::rmsnorm_f32(norm_buf_.data(), x_.data(), bindings_.final_norm.data_f32(), hidden_dim, eps);
     matmul(out_logits, bindings_.lm_head, norm_buf_.data(), config_.vocab_size, hidden_dim);
 
+    return Status::Ok();
+}
+
+Status TransformerEngine::forward_prompt(const int32_t* prompt_tokens,
+                                         size_t prompt_len,
+                                         float* out_final_logits) {
+    if (!initialized_) {
+        return Status::Error(StatusCode::InvalidArgument, "TransformerEngine is not initialized");
+    }
+    if (prompt_tokens == nullptr && prompt_len > 0) {
+        return Status::Error(StatusCode::InvalidArgument, "prompt_tokens is null");
+    }
+    if (prompt_len == 0) {
+        return Status::Ok();
+    }
+    const uint32_t start_pos = kv_cache_.seq_len();
+    if (start_pos + prompt_len > config_.max_seq_len) {
+        return Status::Error(StatusCode::OutOfBounds, "Prompt length exceeds remaining max_seq_len");
+    }
+
+    std::vector<float> step_logits;
+    if (out_final_logits == nullptr) {
+        step_logits.resize(config_.vocab_size);
+    }
+
+    for (size_t i = 0; i < prompt_len; ++i) {
+        const uint32_t pos = start_pos + static_cast<uint32_t>(i);
+        float* logits_dst = (i + 1 == prompt_len && out_final_logits != nullptr)
+                                ? out_final_logits
+                                : (out_final_logits != nullptr ? out_final_logits : step_logits.data());
+        Status st = forward_token(prompt_tokens[i], pos, logits_dst);
+        if (!st.ok()) {
+            return st;
+        }
+    }
     return Status::Ok();
 }
 

@@ -61,6 +61,16 @@ bool run_kv_cache_tests() {
         return false;
     }
 
+    // Truncate checks
+    if (cache.truncate(2).ok()) {
+        std::cerr << "Expected truncate to position > seq_len (2 > 1) to fail\n";
+        return false;
+    }
+    if (!cache.truncate(0).ok() || cache.seq_len() != 0) {
+        std::cerr << "Expected truncate to 0 to succeed and set seq_len to 0\n";
+        return false;
+    }
+
     return true;
 }
 

@@ -458,6 +458,93 @@ bool test_simd_matmul_threading() {
 }
 
 // ============================================================================
+// Task B / SIMD: Odd Rows and Boundary Tails (2-Row Tiled Matmul Verification)
+// ============================================================================
+bool test_simd_matmul_odd_rows_and_tails() {
+    std::cout << "[SIMD OPTS] Verifying 2-row tiled matmul on odd row counts and boundary tails...\n";
+
+    const size_t odd_out_dims[] = {1, 3, 5, 7, 9, 13, 31, 65, 127, 255};
+    const size_t in_dims[] = {32, 64, 128, 2048};
+
+    for (size_t out_dim : odd_out_dims) {
+        for (size_t in_dim : in_dims) {
+            const size_t total_weights = out_dim * in_dim;
+            auto weights = generate_random_floats(total_weights, -1.0f, 1.0f, 999 + static_cast<uint32_t>(out_dim + in_dim));
+            auto x = generate_random_floats(in_dim, -1.0f, 1.0f, 888 + static_cast<uint32_t>(out_dim + in_dim));
+
+            // 1. Q4_0 2-row tiled matmul
+            std::vector<BlockQ4_0> q4_weights(total_weights / kQ4_0BlockElements);
+            quantize_row_q4_0(weights.data(), q4_weights.data(), total_weights);
+
+            std::vector<float> ref_q4(out_dim, 0.0f);
+            scalar::matmul_q4_0_f32(ref_q4.data(), q4_weights.data(), x.data(), out_dim, in_dim);
+
+            std::vector<float> avx2_q4(out_dim, 0.0f);
+            avx2::matmul_q4_0_f32(avx2_q4.data(), q4_weights.data(), x.data(), out_dim, in_dim);
+
+            for (size_t r = 0; r < out_dim; ++r) {
+                if (!check_close(ref_q4[r], avx2_q4[r], 2e-4f, 2e-4f)) {
+                    std::cerr << "AVX2 2-row tiled matmul_q4_0_f32 mismatch at row " << r
+                              << " for odd shape (" << out_dim << "x" << in_dim << ")\n";
+                    return false;
+                }
+            }
+
+            // Also test dispatched multithreaded execution across odd rows
+            ThreadPool pool(4);
+            std::vector<float> dispatched_q4(out_dim, 0.0f);
+            dispatch_matmul_q4_0_f32(dispatched_q4.data(), q4_weights.data(), x.data(),
+                                     out_dim, in_dim, SimdBackend::Avx2, &pool);
+            for (size_t r = 0; r < out_dim; ++r) {
+                if (!check_close(ref_q4[r], dispatched_q4[r], 2e-4f, 2e-4f)) {
+                    std::cerr << "Dispatched 2-row tiled matmul_q4_0_f32 mismatch at row " << r
+                              << " for odd shape (" << out_dim << "x" << in_dim << ")\n";
+                    return false;
+                }
+            }
+
+            // 2. FP32 2-row tiled matmul
+            std::vector<float> ref_f32(out_dim, 0.0f);
+            scalar::matmul_f32(ref_f32.data(), weights.data(), x.data(), out_dim, in_dim);
+
+            std::vector<float> avx2_f32(out_dim, 0.0f);
+            avx2::matmul_f32(avx2_f32.data(), weights.data(), x.data(), out_dim, in_dim);
+
+            for (size_t r = 0; r < out_dim; ++r) {
+                if (!check_close(ref_f32[r], avx2_f32[r], 1e-4f, 1e-4f)) {
+                    std::cerr << "AVX2 2-row tiled matmul_f32 mismatch at row " << r
+                              << " for odd shape (" << out_dim << "x" << in_dim << ")\n";
+                    return false;
+                }
+            }
+
+            // 3. NEON 2-row tiled matmul verification (native on ARM64, scalar fallback on x86)
+            std::vector<float> neon_q4(out_dim, 0.0f);
+            neon::matmul_q4_0_f32(neon_q4.data(), q4_weights.data(), x.data(), out_dim, in_dim);
+            for (size_t r = 0; r < out_dim; ++r) {
+                if (!check_close(ref_q4[r], neon_q4[r], 2e-4f, 2e-4f)) {
+                    std::cerr << "NEON 2-row tiled matmul_q4_0_f32 mismatch at row " << r
+                              << " for odd shape (" << out_dim << "x" << in_dim << ")\n";
+                    return false;
+                }
+            }
+
+            std::vector<float> neon_f32(out_dim, 0.0f);
+            neon::matmul_f32(neon_f32.data(), weights.data(), x.data(), out_dim, in_dim);
+            for (size_t r = 0; r < out_dim; ++r) {
+                if (!check_close(ref_f32[r], neon_f32[r], 1e-4f, 1e-4f)) {
+                    std::cerr << "NEON 2-row tiled matmul_f32 mismatch at row " << r
+                              << " for odd shape (" << out_dim << "x" << in_dim << ")\n";
+                    return false;
+                }
+            }
+        }
+    }
+    std::cout << "  - Odd rows and boundary tails (AVX2 & NEON): PASSED\n";
+    return true;
+}
+
+// ============================================================================
 // Task C: Persistent ThreadPool Lifecycle, Distribution, Stress & Exceptions
 // ============================================================================
 bool test_thread_pool_verification() {
@@ -912,6 +999,9 @@ bool run_kernels_simd_tests() {
 
     // Task B / C: Multithreaded matmul verification
     if (!test_simd_matmul_threading()) {
+        return false;
+    }
+    if (!test_simd_matmul_odd_rows_and_tails()) {
         return false;
     }
 

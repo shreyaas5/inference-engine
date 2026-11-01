@@ -47,6 +47,29 @@ void rope_inplace_f32(float* qk,
     }
 }
 
+void rope_inplace_cached_f32(float* qk,
+                             size_t num_heads,
+                             size_t head_dim,
+                             const float* cos_row,
+                             const float* sin_row) noexcept {
+    if (qk == nullptr || cos_row == nullptr || sin_row == nullptr ||
+        num_heads == 0 || head_dim == 0 || (head_dim % 2 != 0)) {
+        return;
+    }
+    const size_t half_dim = head_dim / 2;
+    for (size_t h = 0; h < num_heads; ++h) {
+        float* head = qk + h * head_dim;
+        for (size_t i = 0; i < half_dim; ++i) {
+            const float cos_val = cos_row[i];
+            const float sin_val = sin_row[i];
+            const float x0 = head[i];
+            const float x1 = head[i + half_dim];
+            head[i] = x0 * cos_val - x1 * sin_val;
+            head[i + half_dim] = x1 * cos_val + x0 * sin_val;
+        }
+    }
+}
+
 float dot_f32(const float* a, const float* b, size_t len) noexcept {
     float acc = 0.0f;
     for (size_t i = 0; i < len; ++i) {

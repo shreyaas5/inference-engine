@@ -237,3 +237,249 @@
   - Verified all branch SHAs via `git fetch --all --prune` (`33d4bdc`, `b05c4e4`, `e64078c`, `4515579`, `ce1026a`, `58c604d`, `ce769c8`, `783b8f4`, `177fe49`).
   - Audited Ryzen 7 7745HX benchmark CSVs (`benchmarks_{baseline,optimised,prefetch}.csv`) in `b05c4e4` against `CPU_KERNEL_BENCHMARKS.md` and `bench_kernels.cpp`.
   - Reconciled all C++17 header signatures, enum values (`DataType::Q4_0 = 2`), `.ie` header byte offsets (`0x00..0x3F`), exact 22-layer `.ie` byte sizes (`4,400,213,312` B `FP32`, `619,113,792` B pure `Q4_0`, `1,069,673,792` B mixed `Q4_0`), Python tool CLI flags, and Sections A–G with ready-to-paste Antigravity continuation prompts for S, U, I, and P.
+
+---
+
+## Session 013 — 2026-11-01 (00:00–00:20 IST)
+- **Engineer / Agent:** I (Principal CPU Performance Engineer, SIMD Optimisation Specialist, and Numerical Computing Researcher) + Antigravity Co-Pilot
+- **Branch:** `feature/cpu-kernel-optimisation`
+- **Objective:** Take the existing CPU kernel implementation further through systematic profiling, benchmarking, SIMD/cache optimization, and numerical validation across all TinyLlama matrix dimensions on AMD Ryzen 7 7745HX (Zen 4, 8 physical cores, 16 SMT threads, AVX2 + FMA, Windows 11).
+- **Files Modified / Created:**
+  - `CMakeLists.txt` — Added `inference_engine_bench` target linked against `inference_engine_core`.
+  - `benchmarks/bench_kernels.cpp` — Dedicated benchmarking framework measuring all 8 TinyLlama projection shapes with configurable warmup, iterations, statistical aggregation (median, mean, min, max, stddev), GFLOPS, effective memory bandwidth, speedup, thread efficiency, numerical error metrics, and CSV export.
+  - `src/kernels/avx2/kernels_avx2.cpp` — Implemented Vectorized Scale Accumulation in `dot_q4_0_f32` (single horizontal reduction at row completion) and 2-row register tiling in `matmul_q4_0_f32` (loading activation vector $x$ once for two simultaneous weight rows with zero register spills).
+  - `src/kernels/dispatch.cpp` — Implemented contiguous 2-row-aligned chunk scheduling (`rows_per_task = max(2, (out_dim / (num_threads * 4)) & ~1)`), slashing task queue contention by over 95%.
+  - `tests/test_kernels_simd.cpp` — Added `test_simd_matmul_odd_rows_and_tails()` testing odd row counts (`out_dim = 1, 3, 5, 7, 9, 13, 31, 65, 127, 255`) and boundary tails across Q4_0 and FP32.
+  - `tests/test_tokenizer.cpp` — Added fallback detection for `build/tokenizer/tokenizer.model`.
+  - `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` — Comprehensive benchmark and profiling report covering experimental methodology, baseline vs. optimized numbers, thread scaling, numerical error bounds, roofline analysis, and software prefetching findings.
+  - `benchmarks/results/` — Archived raw benchmark runs (`benchmarks_baseline.csv`, `benchmarks_optimised.csv`, `benchmarks_prefetch.csv`).
+  - `DECISIONS.md` — Added `ADR-012` documenting kernel microarchitectural optimizations.
+  - Context documents (`CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/NEXT_ACTIONS.md`, `docs/context/SESSION_LOG.md`).
+- **Optimization Impact & Hardware Results (AMD Ryzen 7 7745HX):**
+  - Attention Q ($2048 \times 2048$, 8T): 0.076 ms $\to$ **0.053 ms** (**+43.1% throughput gain**, 157.09 GFLOPS, 44.18 GB/s, 21.97x speedup vs scalar).
+  - SwiGLU Up ($5632 \times 2048$, 16T): 0.162 ms $\to$ **0.143 ms** (161.09 GFLOPS, 45.31 GB/s, 22.71x speedup vs scalar).
+  - SwiGLU Down ($2048 \times 5632$, 16T): 0.148 ms $\to$ **0.142 ms** (162.80 GFLOPS, 45.79 GB/s, 23.57x speedup vs scalar).
+  - LM Head ($32000 \times 2048$, 16T): 0.874 ms $\to$ **0.808 ms** (162.18 GFLOPS, 45.61 GB/s, 22.87x speedup vs scalar).
+  - Software prefetching empirically analyzed and discarded due to Zen 4 hardware stream prefetcher interference.
+  - Numerical parity strictly preserved: Max Abs Err $< 4.2 \times 10^{-5}$, Rel $L_2$ $< 3.5 \times 10^{-7}$ across all shapes.
+- **Verification Run:**
+  - Build: Clang 23.1.4 (Release) compiled with 0 warnings on all 4 targets.
+  - CTest: **8 / 8 suites passed (100%)** in 2.14s.
+
+---
+
+## Session 014 — 2026-11-01 (00:20–00:30 IST)
+- **Engineer / Agent:** I (Principal CPU Performance Engineer, SIMD Optimisation Specialist, and Numerical Computing Researcher) + Antigravity Co-Pilot
+- **Branch:** `feature/cpu-kernel-optimisation`
+- **Objective:** Complete Phase 2B — Benchmark Verification, NEON Optimisation & Cross-Platform Validation.
+- **Files Modified:**
+  - `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` — Audited and recalculated all percentage improvements using standard formula `(Baseline - Optimised) / Baseline * 100`, providing reproducible data for the 5 core claims.
+  - `src/kernels/neon/kernels_neon.cpp` — Ported 2-row register tiling (`matmul_q4_0_f32`, `matmul_f32`) and vectorized scale accumulation (`dot_q4_0_f32`) to native ARM64 NEON instructions, preserving scalar fallbacks for non-ARM64 platforms.
+  - `tests/test_kernels_simd.cpp` — Added explicit 2-row tiled matmul verification for `neon::matmul_q4_0_f32` and `neon::matmul_f32` across odd dimensions ($1..255$) and boundary tails.
+  - `DECISIONS.md` — Updated `ADR-012` to encompass both AVX2 and ARM64 NEON 2-row tiling.
+  - Context documents (`CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/SESSION_LOG.md`).
+- **Verification Run:**
+  - Cross-compilation syntax & type check: `clang++ --target=aarch64-w64-mingw32 src/kernels/neon/kernels_neon.cpp -Iinclude -std=c++17 -Wall -Wextra -Wpedantic -fsyntax-only` passed with **0 warnings and 0 errors**.
+  - Native release build: Compiled with 0 warnings on Clang 23.1.4.
+  - CTest: **8 / 8 suites passed (100%)** in 2.08s.
+
+---
+
+## Session 015 — 2026-11-01 (01:00–01:25 IST)
+- **Engineer / Agent:** I (Principal CPU Performance Engineer, SIMD Optimisation Specialist, and Numerical Computing Researcher) + Antigravity Co-Pilot
+- **Branch:** `feature/cpu-kernel-optimisation`
+- **Objective:** Synchronize with consolidated integration baseline (`ad246cb`), make benchmark runner backend-agnostic (`detect_best_backend()`, `--backend`), implement adaptive small-matrix task cap in `src/kernels/dispatch.cpp`, and reconcile benchmark figures and links in `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md`.
+- **Files Modified:**
+  - `CMakeLists.txt` — Resolved integration merge conflict, preserving both SentencePiece system include paths and `inference_engine_bench` executable target.
+  - `src/kernels/dispatch.cpp` — Added `compute_chunk_schedule()` with an adaptive small-matrix heuristic (`out_dim <= 256` caps tasks to physical cores $\le 8$ and enforces minimum 16 rows/task), resolving `KI-018`.
+  - `benchmarks/bench_kernels.cpp` — Made backend-agnostic using `detect_best_backend()` and added `--backend <auto|scalar|neon|avx2>` with validation, comma-separated `--threads` parsing, and dynamic labeling, resolving `KI-016`.
+  - `docs/benchmarks/CPU_KERNEL_BENCHMARKS.md` — Reconciled Section 2 Claim D prefetch figures with exact values from `benchmarks/results/benchmarks_prefetch.csv` and converted all machine-local `file:///` URLs to clean repository-relative links.
+  - `DECISIONS.md` — Updated `ADR-012` with adaptive small-matrix scheduling heuristic.
+  - Context documents (`CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/NEXT_ACTIONS.md`, `docs/context/SESSION_LOG.md`).
+- **Verification Run:**
+  - Cross-compilation syntax check: `clang++ --target=aarch64-w64-mingw32 src/kernels/neon/kernels_neon.cpp -Iinclude -std=c++17 -Wall -Wextra -Wpedantic -fsyntax-only` passed with **0 warnings and 0 errors**.
+  - Native release build: Compiled with 0 warnings on Clang 23.1.4.
+  - Benchmark CLI verification: `./build/inference_engine_bench.exe --backend auto`, `--backend scalar`, `--backend neon` (properly rejected with code 1 on x86).
+  - CTest: **8 / 8 suites passed (100%)** in 2.11s.
+
+---
+
+## Session 016 — 2026-11-01 (01:00–02:30 IST)
+- **Engineer / Agent:** Member U (Transformer Engine, Attention, RoPE, KV Cache & Parity Owner) + Antigravity
+- **Branch:** `feature/transformer-runtime`
+- **Objective:** Complete real TinyLlama-1.1B-Chat-v1.0 checkpoint download, export 22-layer `.ie` models (`Q4_0` pure and mixed), optimize RoPE with precomputed lookup tables (`KI-006`), implement multi-token prefill (`forward_prompt`), execute end-to-end real-weight C++ inference, and benchmark runtime performance.
+- **Files Changed:**
+  - `include/inference_engine/kernels.hpp` & `src/kernels/scalar/kernels_scalar.cpp` — Added `scalar::rope_inplace_cached_f32` accepting precomputed `cos_row` and `sin_row`.
+  - `include/inference_engine/transformer.hpp` & `src/transformer/transformer.cpp` — Added RoPE table precomputation `[max_seq_len, head_dim / 2]` in `TransformerEngine::init()`, multi-token prefill method `forward_prompt()`, and wired `rope_inplace_cached_f32` into the per-layer forward pass.
+  - `docs/validation/REAL_TINYLLAMA_TRANSFORMER_VALIDATION.md` — Created real checkpoint validation report with quantization metrics, full 22-layer execution trace, and runtime performance benchmarks.
+  - `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/IMPLEMENTATION_STATUS.md`, `docs/context/KNOWN_ISSUES.md` — Updated status to reflect real-checkpoint inference completion and resolution of `KI-004` and `KI-006`.
+- **Verification & Execution Results:**
+  - Completed download of `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` (`2,200,119,864` bytes). Verified 201/201 tensors via `tools/inspect_checkpoint.py`.
+  - Exported pure `Q4_0` model `models/tinyllama-1.1b-q4_0.ie` (`619,113,792` B; `MAE = 1.385e-3`, `RMSE = 1.744e-3`, `Rel L2 = 0.0883`).
+  - Exported mixed `Q4_0` model `models/tinyllama-1.1b-q4_0-mixed.ie` (`1,069,673,792` B).
+  - Executed real-model E2E CLI generation (`inference-engine.exe`):
+    - Pure `Q4_0`: TTFT `1200.07 ms`, decode `20.89 tokens/sec`, peak RSS `698.71 MiB`.
+    - Mixed `Q4_0`: TTFT `1338.06 ms`, decode `19.07 tokens/sec`, peak RSS `1126.42 MiB`.
+  - All 8 CTest suites passed (`8/8`, 100%).
+
+
+---
+
+## Session 017 — 2026-11-01 (03:30–04:45 IST)
+- **Engineer / Agent:** Release Lead, Senior Git Engineer & Repository Integration Architect (Antigravity)
+- **Branch:** `integration/m4-full-inference` (branched from `main` @ `5657d9278b2f59e1f1ae0605baf1543cb860fde7`)
+- **Objective:** Consolidate, resolve conflicts, and rigorously verify all three outstanding feature branches across Member U (`origin/feature/transformer-runtime`), Member I (`origin/feature/cpu-kernel-optimisation`), and Member P (`origin/feature/runtime-tokenizer`) into a clean release candidate branch without touching `main`.
+- **Merge Sequence & Conflict Resolutions:**
+  1. **Member U Merge (`bd06e62`):** Merged `origin/feature/transformer-runtime` (`fb6420b`). Precomputed RoPE lookup tables, `scalar::rope_inplace_cached_f32`, `forward_prompt` multi-token prefill API, SentencePiece GCC 16 fix (`-include cstdint`), and `docs/validation/REAL_TINYLLAMA_TRANSFORMER_VALIDATION.md`. Zero code conflicts.
+  2. **Member I Merge (`4001171`):** Merged `origin/feature/cpu-kernel-optimisation` (`cb8f08d`). AVX2 & NEON 2-row register tiling (`matmul_q4_0_f32`), vectorized scale accumulation (`dot_q4_0_f32`), odd-row tail verification, adaptive ThreadPool chunk scheduling (`out_dim <= 256`), and backend-agnostic benchmark runner (`inference_engine_bench`). Reconciled documentation conflicts in `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`, `docs/context/KNOWN_ISSUES.md`, and `docs/context/SESSION_LOG.md`.
+  3. **Member P Merge (`c642bbf`):** Merged `origin/feature/runtime-tokenizer` (`eaaeceb`). Streaming CLI detokenisation, `--bench-runs`, CI setup-python (`python-version: "3.11"`). Restored accidentally deleted CLI argument parsing block in `src/app/main.cpp`, added `--max-new-tokens` and `--temperature` aliases, made `tests/test_cli_integration.cpp` fully cross-platform (`popen`/`pclose` on POSIX, `_popen`/`_pclose` on Windows), and retained both `golden_forward` and `cli_integration` in `tests/test_main.cpp`.
+- **Verification Run Results:**
+  - Build: Clean compile with 0 warnings on Clang C++17 (Release mode).
+  - CTest: **9 / 9 suites passed (100%)** in 2.38s (`loader_validation`, `quant_packing`, `kernels_scalar`, `kernels_simd`, `kv_cache`, `tokenizer`, `sampler`, `golden_forward`, `cli_integration`).
+  - Kernel Benchmarks (`./build/inference_engine_bench` on ARM64 NEON):
+    - Microbenchmark: Scalar Q4_0 Dot: 8.22 ms vs NEON: 4.07 ms (**2.02x speedup**).
+    - Attention Q: NEON 1T is **2.658x faster** (0.320 ms vs 0.851 ms), NEON 2T is **5.151x faster** (0.165 ms).
+    - LM Head: NEON 1T is **2.683x faster** (4.975 ms vs 13.352 ms), NEON 2T is **5.275x faster** (2.531 ms).
+  - Python Tools:
+    - `python3 tools/inspect_checkpoint.py --print-frozen-contract`: PASSED.
+    - `python3 tools/convert_to_inference_engine.py --self-test`: PASSED.
+    - `python3 tools/verify_tokenizer_parity.py --self-test`: PASSED.
+    - `/usr/bin/python3 tools/verify_transformer_q4.py`: PASSED (`cos_sim >= 0.996359`).
+- **Local Checkpoint Status:**
+  - Local `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` remains at `325,472,256` bytes (310 MB / 2.20 GB, ~14.8%), awaiting resumption of download (`KI-004`). Real 22-layer execution is verified by Member U on complete checkpoint.
+
+---
+
+## Session 018 — 2026-11-01 (05:30–06:25 IST)
+- **Engineer / Agent:** Principal Systems Engineer & Implementation Lead (Antigravity)
+- **Branch:** `integration/m4-full-inference` (tracking `origin/integration-m4-full-inference`, HEAD: `e46c06e`)
+- **Objective:** Execute Milestone M5: acquire the complete bit-exact `TinyLlama/TinyLlama-1.1B-Chat-v1.0` checkpoint on local workstation, convert it into custom `.ie` v1 format (pure `Q4_0` and bit-identical `FP32`), execute end-to-end 22-layer streaming text generation across 5 real prompts, and measure CPU scaling and throughput on Apple Silicon NEON.
+- **Milestone M5 Deliverables & Verification Results:**
+  1. **M5.1 Checkpoint Ingestion:** Resumed HTTP byte range transfer of `models/TinyLlama-1.1B-Chat-v1.0/model.safetensors` from byte 325,472,256 to completion. Verified exact size of **2,200,119,864 bytes**. `python3 tools/inspect_checkpoint.py --checkpoint-dir models/TinyLlama-1.1B-Chat-v1.0` confirmed all 201/201 tensors and 10/10 frozen hyperparameter invariants (`KI-004` resolved).
+  2. **M5.2 Model Conversion:**
+     - Pure `Q4_0`: `models/tinyllama-1.1b-q4_0.ie` (`619,113,792` bytes). Error stats across 1,099,956,224 elements: `MAE = 1.385e-3`, `RMSE = 1.744e-3`, `MaxAbsErr = 0.1875`, `Rel L2 = 0.0883`.
+     - Bit-identical `FP32`: `models/tinyllama-1.1b-fp32.ie` (`4,400,213,312` bytes).
+     - Verified 64-byte alignment across all 201 tensors with zero gaps/overlaps via `inspect_checkpoint.py --ie-file`.
+  3. **M5.3 Real 22-Layer End-to-End Inference:**
+     - Verified full autoregressive generation across all 5 standard test prompts using `./build/inference-engine`:
+       1. "Hello, introduce yourself." $\to$ Coherent English response ("I am a machine learning engineer...").
+       2. "Explain how a CPU executes an instruction." $\to$ Coherent 3-step breakdown (fetch, decode, execute).
+       3. "What is a neural network?" $\to$ Accurate definitions of nodes, weighted connections, and layers.
+       4. "Explain the difference between RAM and storage." $\to$ Accurate distinction between volatile execution memory and persistent storage.
+       5. "Tell me a short fact about space." $\to$ Fluent galactic star population fact.
+     - Real-time incremental prefix-diff detokenisation flushes tokens smoothly without latency spikes or missing spaces (`KI-017` verified).
+  4. **M5.4 Benchmarking & Profiling on Apple Silicon NEON (10-core M-series):**
+     - **Thread Scaling (`Q4_0`):**
+       - 1 Thread: TTFT = 2952.6 ms, Prefill = 8.5 tok/s, Decode = 12.5 tok/s, RSS = 644.0 MiB, CPU = 84%
+       - 2 Threads: TTFT = 1063.2 ms (2.78x), Prefill = 23.5 tok/s, Decode = 22.9 tok/s, RSS = 658.3 MiB, CPU = 194%
+       - 4 Threads: TTFT = 707.5 ms (4.17x), Prefill = 35.3 tok/s, Decode = 34.5 tok/s, RSS = 658.3 MiB, CPU = 368%
+       - 8 Threads: TTFT = 640.2 ms (4.61x), Prefill = 39.1 tok/s, Decode = 36.0 tok/s, RSS = 658.4 MiB, CPU = 553%
+     - **FP32 vs Q4_0 Comparison (4 Threads):**
+       - `FP32`: TTFT = 6096.8 ms, Prefill = 3.4 tok/s, Decode = 16.1 tok/s, Peak RSS = 3956.6 MiB
+       - `Q4_0`: TTFT = 621.0 ms (**9.8x faster TTFT**), Prefill = 35.8 tok/s (**10.5x faster prefill**), Decode = 35.2 tok/s (**2.2x faster decode**), Peak RSS = 658.3 MiB (**6.0x lower RAM**)
+     - **Microbenchmarks (`inference_engine_bench`):**
+       - Attention Q (2048x2048): Scalar 0.865 ms vs NEON 4T 0.142 ms (**6.09x speedup**, 59.0 GFLOPS, 16.6 GB/s)
+       - SwiGLU Up (5632x2048): Scalar 2.611 ms vs NEON 4T 0.306 ms (**8.54x speedup**, 75.5 GFLOPS, 21.2 GB/s)
+       - SwiGLU Down (2048x5632): Scalar 2.706 ms vs NEON 4T 0.305 ms (**8.89x speedup**, 75.8 GFLOPS, 21.3 GB/s)
+       - LM Head (32000x2048): Scalar 13.382 ms vs NEON 8T 1.147 ms (**11.66x speedup**, 114.2 GFLOPS, 32.1 GB/s)
+  5. **Regression & CI State:**
+     - Local CTest: **9 / 9 suites passed (100%)** in 1.95s.
+     - Remote CI: GitHub Actions run `41255038648` on PR #6 passed 100% across Ubuntu GCC, macOS AppleClang, and Hugging Face Tokenizer Parity.
+
+---
+
+## Session 019 — 2026-11-01 (13:00–13:30 IST)
+- **Engineer / Agent:** Senior Integration Engineer & Release Lead (Antigravity)
+- **Branch:** `integration/m4-full-inference` (tracking `origin/integration-m4-full-inference`)
+- **Objective:** Execute Milestone M6 Productisation: complete repository-wide branch synchronisation (M6.0), implement interactive multi-turn chat REPL with KV-cache prefix matching and truncation (M6.1, M6.2), implement Top-K candidate filtering (M6.3), implement multi-run benchmark statistical summary (`--bench-runs <N>`), robust error diagnostics and auto-discovery, update full documentation and release handoff.
+- **Milestone M6 Deliverables & Verification Results:**
+  1. **M6.0 Branch Inventory:** Audited all 11 local branches and 18 remote branches. Proved `integration/m4-full-inference` contains 100% of teammate work with 0 missing commits. Preserved stash intact.
+  2. **M6.1 Interactive Chat UX:** Added `BIOS> ` multi-turn REPL with system banner, `/help`, `/clear`, `/exit`, `/quit`, streaming token decode, and context-window monitoring.
+  3. **M6.2 KV-Cache Prefix Matching:** Implemented `KvCache::truncate()` in `src/core/kv_cache.cpp` and token prefix matching in `src/app/main.cpp`. Tested multi-turn memory on real model: Turn 1 "Hi, my name is Alice." -> Turn 2 "What is my name?" -> Answer "Your name is Alice."
+  4. **M6.3 Sampling Enhancements:** Added `top_k` candidate filtering to `SamplerConfig` and `Sampler::sample()` with unit test verification in `tests/test_sampler.cpp`.
+  5. **M6.4 Multi-Run Benchmark Summary:** Added `--bench-runs <N>` reporting mean, median, min, max for TTFT, prompt throughput, and decode throughput.
+  6. **M6.5 Diagnostics & Auto-Discovery:** Automated discovery of `.ie` model and tokenizer assets from `models/`; added error diagnostics for non-existent files and invalid flags in CLI process tests.
+  7. **M6.6–M6.8 Release Documentation & Validation:** Overhauled `README.md`, updated `DECISIONS.md` (ADR-013), `CURRENT_STATUS.md`, `SESSION_HANDOFF.md`. All 9 CTest suites passed 100% in 2.66s. Hugging Face tokenizer parity passed 100%. Product verdict: `PRODUCT READY`.
+
+---
+
+## Session 020 — 2026-11-01 (14:00–14:30 IST)
+- **Engineer / Agent:** Principal Full-Stack Engineer, C++ Systems Engineer, Frontend Architect (Antigravity)
+- **Branch:** `integration/m4-full-inference` (tracking `origin/integration-m4-full-inference`)
+- **Objective:** Execute Milestone M8: Build Inference Studio — Full-Stack Frontend, Live Telemetry and Interactive Inference Workstation.
+- **Milestone M8 Deliverables & Verification Results:**
+  1. **Persistent Worker Subprocess (`src/app/studio_worker.hpp`, `src/app/main.cpp`):**
+     - Added `--studio-worker` persistent JSON-lines stdio telemetry worker mode.
+     - Loads and memory-maps `.ie` model once at startup (0.34 ms load time) and maintains resident `TransformerEngine` and `KvCache`.
+     - Supports commands: `status`, `chat`, `stop`, `clear`, `configure`, `benchmark`, `shutdown`.
+     - Real OS telemetry instrumentation: captures resident RAM footprint via `mach_task_basic_info` (Darwin) / `/proc/self/statm` (Linux) and CPU utilization via `getrusage()`.
+  2. **Node.js API Gateway & SSE Event Hub (`studio/server/index.ts`, `studio/server/engineManager.ts`):**
+     - Spawns and manages `inference-engine --studio-worker` persistent child process over low-latency streaming pipes.
+     - Implements Server-Sent Events stream at `/api/events` broadcasting fine-grained execution events (`generation_started`, `token`, `generation_completed`, `generation_cancelled`, `context_cleared`, `benchmark_progress`, `benchmark_completed`, `log`).
+     - Exposes REST endpoints: `/api/health`, `/api/model`, `/api/system`, `/api/chat`, `/api/chat/stop`, `/api/chat/clear`, `/api/configure`, `/api/benchmark`, `/api/benchmark/history`, `/api/logs`, `/api/logs/clear`.
+     - Serves built production frontend assets directly from `studio/dist/`.
+  3. **Terminal-Themed Workstation Frontend (`studio/src/`):**
+     - Built with React 19, TypeScript, Vite, Tailwind CSS v4, Lucide icons in an obsidian dark aesthetic (`#080a0d`) with phosphor green accents (`#10b981`).
+     - **NavigationSidebar:** left panel with engine status badge, active view selector, footer hardware summary.
+     - **ChatPlayground:** conversational chat with streaming cursor, metrics pill badges (TTFT, prefill TPS, decode TPS, peak RSS), runtime sliders (temp, top-p, top-k, max tokens, threads), and prompt starter pills.
+     - **ObservabilityPanel:** 4 real-time KPI gauges, live rolling SVG throughput curve, KV cache monitor, and hardware runtime status table.
+     - **ModelInspector:** complete architecture breakdown and searchable table of all 201 model tensors with shapes, data types, and byte offsets.
+     - **BenchmarkLab:** configurable multi-run benchmark runner with live progress, statistical aggregation (mean, median, min, max, stddev), and pass/fail baseline comparison against historical M6/M7 baselines.
+     - **RuntimeLogViewer:** live streaming engine log viewer with level filtering, search, auto-scroll, clear, and download.
+     - **SettingsModal:** runtime configuration and engine restart modal.
+  4. **Zero External Runtimes:**
+     - 100% custom C++17 inference runtime. Zero PyTorch, LibTorch, llama.cpp, Ollama, or MLX dependencies.
+  5. **Architectural Decision Record:**
+     - Recorded `ADR-014` in `DECISIONS.md`.
+  6. **End-to-End Verification:**
+     - 9/9 CTest test suites pass 100% (2.64s).
+     - Verified live streaming chat, KV cache prefix reuse (30 tokens reused on Turn 2, decode TPS = 36.38 tok/s), benchmark SSE streaming, and 0 warnings on frontend and C++ builds.
+
+---
+
+## Session 021 — 2026-11-01 (14:30–14:50 IST)
+- **Engineer / Agent:** Principal Systems Architect & Technical Rehearsal Lead (Antigravity)
+- **Branch:** `integration/m4-full-inference` (tracking `origin/integration-m4-full-inference`)
+- **Objective:** Execute Milestone M9: Final Technical Mastery Sprint — Understand, Explain, and Defend Every Engineering Decision for Hackathon Pitch & Technical Evaluation.
+- **Milestone M9 Deliverables & Verification Results:**
+  1. **Master Technical Guide (`docs/PITCH_TECHNICAL_MASTERY.md`):**
+     - Authored 11 exhaustive chapters explaining project scope, 15-stage end-to-end pipeline, TinyLlama architecture and tensor calculations, `Q4_0` 18-byte block quantization mathematics and dequantization fusion, the custom `.ie` v1 64-byte aligned binary format and zero-copy `mmap` loader, CPU SIMD vector optimizations (NEON, AVX2/FMA, 2-row register tiling, vectorized scale accumulation, ThreadPool task chunking), KV-cache commit contracts and conversational prefix-matching, Inference Studio persistent worker architecture, benchmark methodology and empirical M8 results, and consolidated ADR trade-off defense.
+  2. **Subsystem Source Code Walkthrough (`docs/PITCH_CODE_WALKTHROUGH.md`):**
+     - Detailed granular subsystem guide covering ModelLoader, Quantization, TensorView, TransformerEngine 16-step forward pass, Causal GQA Attention, KvCache, CPU SIMD kernels, ThreadPool, Tokenizer/Sampler, Studio Worker, Node.js Gateway, and React 19 Observability Studio with exact source paths, execution chains, and verbatim code excerpts.
+  3. **Judge Question Bank (`docs/PITCH_JUDGE_QUESTIONS.md`):**
+     - Authored 65 technical questions organized across basic concepts, architecture, math, implementation, performance, critical engineering, and adversarial judge challenges, providing 20-second elevator summaries, deep proofs, source references, and follow-up defenses.
+  4. **Team Pitch Crash Course (`docs/PITCH_TEAM_CRASH_COURSE.md`):**
+     - Prepared 2-hour 15-minute rehearsal manual with explicit speaker ownership mapping (Members S, I, U, P), 30-min overview, 60-min deep walkthrough, 30-min judge drill, and 15-min whiteboard diagrams.
+  5. **Verification & Testing:**
+     - 9/9 CTest test suites pass 100% (2.16s).
+     - Python offline tool self-tests pass (`convert_to_inference_engine.py --self-test`, `verify_tokenizer_parity.py --self-test`).
+     - Product verdict: `EVALUATION & DEFENSE READY`.
+
+---
+
+## Session 022 — 2026-11-01 (14:50–15:00 IST)
+- **Engineer / Agent:** Principal Full-Stack & Systems Engineer (Antigravity)
+- **Branch:** `integration/m4-full-inference` (tracking `origin/integration-m4-full-inference`)
+- **Objective:** Fix Critical Pitch Blocker (`KI-019`): Generated response text in Inference Studio chat playground was completely invisible/blank despite active streaming cursor and accurate token performance telemetry.
+- **Root Cause Analysis:**
+  1. In commit `244f78a`, `src/app/studio_worker.hpp` emitted token deltas under the JSON property `"delta"` (`{"event":"token",...,"delta":"..."}`). However, `studio/src/App.tsx` read `const text = event.text || '';`. Because `event.text` was `undefined`, it evaluated to `""`, appending empty strings to `msg.content` on every token while updating `msg.metrics`.
+  2. On `generation_completed`, `App.tsx` never updated `msg.content` with the completed text, leaving the assistant message permanently blank while displaying the metrics bar.
+  3. Static asset caching in `studio/server/index.ts` was serving JS bundles with `max-age=31536000`, causing browsers to hold onto old bundles across normal refreshes.
+- **Fixes Applied & Verified:**
+  1. **Dual Property Emission (`src/app/studio_worker.hpp`):**
+     - Emitted both `"delta"` and `"text"` on token events (`ss << ",\"delta\":\"" << ... << "\",\"text\":\"" << ...`).
+  2. **Frontend Robust Token & Completion Parsing (`studio/src/App.tsx`):**
+     - Handled `event.delta !== undefined ? event.delta : (event.text || '')`.
+     - Targeted assistant messages by `activeMessageIdRef.current` with fallback to `last.role === 'assistant'`.
+     - In `generation_completed`, synchronized `content: fullText && fullText.length >= msg.content.length ? fullText : (msg.content || fullText)`.
+     - Updated message state updates to functional `setMessages((prev) => [...prev, userMsg, assistantMsg])`.
+  3. **Zero Browser Caching for Pitch (`studio/server/index.ts`):**
+     - Configured static server to send `'Cache-Control': 'no-cache, no-store, must-revalidate'`, `'Pragma': 'no-cache'`, `'Expires': '0'` on all assets.
+  4. **Multi-Turn Context & Startup Hardening:**
+     - Wired multi-turn `messages` array in `sendChat` so conversational prefix matching is utilized across interactive turns.
+     - Hardened `./start_studio.sh` with automatic port 3000 freeing and asset verification.
+  5. **Live Verification:**
+     - Tested live inference stream via `node test_poem.mjs` against `http://localhost:3000`: Prompt `"Write a short poem about compiler optimization."` streamed 64 tokens with 100% text fidelity token-by-token and matched final text identically.
+     - Confirmed `curl -I http://127.0.0.1:3000/` returns `Cache-Control: no-cache, no-store, must-revalidate`.
+     - Rebuilt production frontend bundle: `dist/assets/index-Wp3IOSSg.js`.
+

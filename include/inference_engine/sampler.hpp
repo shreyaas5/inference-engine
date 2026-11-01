@@ -9,6 +9,7 @@ struct SamplerConfig {
     float temperature = 0.0f;
     float top_p = 1.0f;
     uint64_t seed = 42;
+    uint32_t top_k = 0;
 };
 
 class Sampler {

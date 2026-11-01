@@ -1,0 +1,30 @@
+{
+  "name": "inference-engine-studio",
+  "private": true,
+  "version": "1.0.0",
+  "description": "BIOS V2 — Inference Studio: Local Systems Engineering Workstation & Live Telemetry for Custom C++17 Inference Engine",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5173 --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "start": "tsx server/index.ts",
+    "preview": "vite preview --port 5173 --host 127.0.0.1"
+  },
+  "dependencies": {
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.6",
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.6",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}
+

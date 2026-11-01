@@ -13,6 +13,7 @@ bool run_kv_cache_tests();
 bool run_tokenizer_tests();
 bool run_sampler_tests();
 bool run_golden_forward_tests();
+    bool run_cli_integration_test();
 
 }  // namespace inference_engine::testing
 
@@ -33,6 +34,7 @@ int main(int argc, char** argv) {
         {"tokenizer", run_tokenizer_tests},
         {"sampler", run_sampler_tests},
         {"golden_forward", run_golden_forward_tests},
+        {"cli_integration", run_cli_integration_test},
     };
 
     std::string filter;
